@@ -27,9 +27,15 @@ done
 
 [ -z "$PI_USER" ] || [ -z "$PI_HOST" ] || [ -z "$PI_PATH" ] && usage
 
-TOKMON_BIN="$(command -v tokmon || true)"
-if [ -z "$TOKMON_BIN" ]; then
-    echo "tokmon CLI not on PATH" >&2
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+TOKMON_BIN="$REPO_ROOT/.venv/bin/tokmon"
+if [ ! -x "$TOKMON_BIN" ]; then
+    TOKMON_BIN="$(command -v tokmon || true)"
+fi
+if [ -z "$TOKMON_BIN" ] || [ ! -x "$TOKMON_BIN" ]; then
+    echo "tokmon CLI not found. Expected at $REPO_ROOT/.venv/bin/tokmon or on PATH." >&2
+    echo "Create venv: cd $REPO_ROOT && python3 -m venv .venv && .venv/bin/pip install -e ." >&2
     exit 1
 fi
 

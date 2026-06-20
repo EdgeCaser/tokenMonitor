@@ -45,10 +45,19 @@ c_red() { printf "\033[1;31m%s\033[0m\n" "$*" >&2; }
 c_blue "▶ tokmon macOS client setup"
 
 # --- 1. tokmon binary check ---------------------------------------------------
-TOKMON_BIN="$(command -v tokmon || true)"
-if [ -z "$TOKMON_BIN" ]; then
-    c_red "tokmon CLI not on PATH. Activate the venv first, or install globally:"
-    c_red "  pip install -e ."
+# Prefer the venv next to this repo; fall back to PATH (activated venv / global install).
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+TOKMON_BIN="$REPO_ROOT/.venv/bin/tokmon"
+if [ ! -x "$TOKMON_BIN" ]; then
+    TOKMON_BIN="$(command -v tokmon || true)"
+fi
+if [ -z "$TOKMON_BIN" ] || [ ! -x "$TOKMON_BIN" ]; then
+    c_red "tokmon CLI not found."
+    c_red "  Expected at: $REPO_ROOT/.venv/bin/tokmon"
+    c_red "  Or on PATH (activate venv: source .venv/bin/activate)."
+    c_red "  To create the venv:"
+    c_red "    cd $REPO_ROOT && python3 -m venv .venv && .venv/bin/pip install -e ."
     exit 1
 fi
 c_blue "  tokmon: $TOKMON_BIN ✓"
