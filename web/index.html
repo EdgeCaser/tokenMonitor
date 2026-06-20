@@ -27,9 +27,11 @@
       <label class="text-sm text-slate-600">since</label>
       <select id="since" class="border rounded px-2 py-1 text-sm bg-white">
         <option value="all">all time</option>
-        <option value="7d">7d</option>
         <option value="30d">30d</option>
+        <option value="7d">7d</option>
         <option value="24h">24h</option>
+        <option value="6h">6h</option>
+        <option value="1h">1h</option>
       </select>
     </div>
   </header>
@@ -166,6 +168,7 @@
       <label class="text-sm text-slate-600">group by</label>
       <select id="spend-by" class="border rounded px-2 py-1 text-sm bg-white">
         <option value="day">day</option>
+        <option value="hour">hour</option>
         <option value="model">model</option>
         <option value="project">project</option>
       </select>
@@ -209,6 +212,23 @@ const since = () => $("#since").value;
 const host  = () => $("#host").value;
 const hostQ = () => host() ? `&host=${encodeURIComponent(host())}` : "";
 
+// Pick the right time bucket for the overview chart based on the since window.
+// Anything 24h or shorter buckets by hour; longer windows by day.
+function autoBucket() {
+  const s = since();
+  if (s.endsWith("h")) return "hour";
+  return "day";
+}
+function autoBucketLimit() {
+  return autoBucket() === "hour" ? 720 : 365;  // 30 days of hours or 1 yr of days
+}
+function fmtBucketLabel(s) {
+  // "2026-06-20T15:00:00" → "06-20 15:00"; "2026-06-20" → "06-20"
+  if (!s) return "";
+  if (s.length >= 13) return s.slice(5, 10) + " " + s.slice(11, 16);
+  return s.slice(5);
+}
+
 async function populateHostDropdown() {
   const sel = $("#host");
   if (sel.options.length > 1) return;  // already populated
@@ -240,21 +260,27 @@ async function loadOverview() {
   $("#t-projects").textContent = fmtInt(s.projects);
   $("#t-spend").textContent    = fmtUsd(s.total_usd);
 
-  const days = await api(`/api/spend?by=day&since=${since()}&limit=120${hostQ()}`);
-  days.reverse();
+  const bucket = autoBucket();
+  const rows = await api(`/api/spend?by=${bucket}&since=${since()}&limit=${autoBucketLimit()}${hostQ()}`);
+  rows.reverse();
+  const labels = rows.map(r => fmtBucketLabel(r[bucket]));
   destroyChart("daily");
   charts.daily = new Chart($("#chart-daily"), {
     type: "line",
     data: {
-      labels: days.map(d => d.day),
+      labels: labels,
       datasets: [{ label: "$ spend",
-                   data: days.map(d => d.usd),
+                   data: rows.map(r => r.usd),
                    borderColor: "rgb(16,185,129)",
                    backgroundColor: "rgba(16,185,129,0.15)",
                    fill: true, tension: 0.2 }],
     },
-    options: { plugins: { legend: { display: false } } },
+    options: { plugins: { legend: { display: false } },
+               scales: { x: { ticks: { maxTicksLimit: 24 } } } },
   });
+  // Update the chart heading to reflect the bucket
+  const chartHeading = document.querySelector("[data-pane='overview'] canvas").previousElementSibling;
+  if (chartHeading) chartHeading.textContent = bucket === "hour" ? "Hourly spend" : "Daily spend";
 
   const projs = await api(`/api/spend?by=project&since=${since()}&limit=10${hostQ()}`);
   $("#t-top-projects").innerHTML = projs.map(p =>
@@ -344,15 +370,19 @@ async function loadCache() {
 
 async function loadSpend() {
   const by = $("#spend-by").value;
-  const rows = await api(`/api/spend?by=${by}&since=${since()}&limit=200${hostQ()}`);
+  const limit = by === "hour" ? 720 : 200;
+  const rows = await api(`/api/spend?by=${by}&since=${since()}&limit=${limit}${hostQ()}`);
+  if (by === "hour" || by === "day") rows.reverse();  // chronological for charts
   const label = by === "day"
                   ? rows.map(r => r.day)
-                  : by === "model"
-                    ? rows.map(r => r.model)
-                    : rows.map(r => r.project_label);
+                  : by === "hour"
+                    ? rows.map(r => fmtBucketLabel(r.hour))
+                    : by === "model"
+                      ? rows.map(r => r.model)
+                      : rows.map(r => r.project_label);
   destroyChart("spend");
   charts.spend = new Chart($("#chart-spend"), {
-    type: by === "day" ? "line" : "bar",
+    type: (by === "day" || by === "hour") ? "line" : "bar",
     data: {
       labels: label,
       datasets: [{ label: "$ spend",
@@ -361,7 +391,10 @@ async function loadSpend() {
                    borderColor: "rgba(99,102,241,1)",
                    fill: true, tension: 0.2 }],
     },
-    options: { plugins: { legend: { display: false } } },
+    options: {
+      plugins: { legend: { display: false } },
+      scales: { x: { ticks: { maxTicksLimit: 24 } } },
+    },
   });
 }
 

@@ -273,6 +273,14 @@ def spend_by(
             FROM v_turn_cost {where}
             GROUP BY day ORDER BY day DESC LIMIT {limit}
         """
+    elif dimension == "hour":
+        q = f"""
+            SELECT date_trunc('hour', ts) AS hour, COUNT(*) AS turns,
+                   SUM(input_tokens+output_tokens+cache_write_5m+cache_write_1h+cache_read) AS tokens,
+                   SUM(total_usd) AS usd
+            FROM v_turn_cost {where}
+            GROUP BY hour ORDER BY hour DESC LIMIT {limit}
+        """
     elif dimension == "session":
         q = f"""
             SELECT session_id, ANY_VALUE(project_label) AS project, COUNT(*) AS turns,

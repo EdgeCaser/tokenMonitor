@@ -36,6 +36,7 @@ def api_spend(
         "project": ["project_label", "project_path", "turns", "tokens", "usd"],
         "model":   ["model", "turns", "tokens", "usd"],
         "day":     ["day", "turns", "tokens", "usd"],
+        "hour":    ["hour", "turns", "tokens", "usd"],
         "session": ["session_id", "project", "turns", "tokens", "usd"],
         "tool":    ["tool_name", "calls", "turns_using", "input_chars"],
         "host":    ["host", "sessions", "turns", "tokens", "usd"],
@@ -46,6 +47,8 @@ def api_spend(
     for d in out:
         if "day" in d and d["day"] is not None:
             d["day"] = str(d["day"])
+        if "hour" in d and d["hour"] is not None:
+            d["hour"] = d["hour"].isoformat() if hasattr(d["hour"], "isoformat") else str(d["hour"])
     return out
 
 

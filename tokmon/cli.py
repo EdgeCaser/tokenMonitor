@@ -127,7 +127,7 @@ def summary(since):
 
 @cli.command()
 @click.option("--by", "dimension",
-              type=click.Choice(["project", "model", "day", "session", "tool", "host"]),
+              type=click.Choice(["project", "model", "day", "hour", "session", "tool", "host"]),
               default="project")
 @click.option("--since", default="all")
 @click.option("-n", "--limit", default=20)
@@ -155,6 +155,12 @@ def spend(dimension, since, limit):
         t.add_column("tokens", justify="right"); t.add_column("$ spend", justify="right")
         for day, turns, tokens, usd in rows:
             t.add_row(str(day), _fmt_int(turns), _fmt_int(tokens), _fmt_usd(usd))
+    elif dimension == "hour":
+        t.add_column("hour"); t.add_column("turns", justify="right")
+        t.add_column("tokens", justify="right"); t.add_column("$ spend", justify="right")
+        for hour, turns, tokens, usd in rows:
+            label = hour.strftime("%Y-%m-%d %H:00") if hasattr(hour, "strftime") else str(hour)
+            t.add_row(label, _fmt_int(turns), _fmt_int(tokens), _fmt_usd(usd))
     elif dimension == "session":
         t.add_column("session"); t.add_column("project")
         t.add_column("turns", justify="right"); t.add_column("tokens", justify="right")
