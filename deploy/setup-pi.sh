@@ -119,6 +119,11 @@ systemctl --user enable --now tokmon-ingest.timer
 # Kick off one ingest right now so the dashboard isn't empty
 systemctl --user start tokmon-ingest.service || true
 
+# --- 7b. Install `tokmon-update` symlink to ~/.local/bin -----------------------
+mkdir -p "$HOME/.local/bin"
+ln -sf "$APP_DIR/deploy/tokmon-update.sh" "$HOME/.local/bin/tokmon-update"
+chmod +x "$APP_DIR/deploy/tokmon-update.sh"
+
 # --- 8. Echo URLs -------------------------------------------------------------
 HOSTNAME_SHORT="$(hostname -s)"
 TAILSCALE_NAME=""
