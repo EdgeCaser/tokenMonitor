@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Rendered by deploy/setup-client-macos.sh — placeholders replaced at install. -->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.tokmon.sync</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>@TOKMON_BIN@</string>
+        <string>push</string>
+    </array>
+
+    <key>StartInterval</key>
+    <integer>600</integer>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>@HOME@/Library/Logs/tokmon-sync.log</string>
+    <key>StandardErrorPath</key>
+    <string>@HOME@/Library/Logs/tokmon-sync.log</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+        <key>HOME</key>
+        <string>@HOME@</string>
+    </dict>
+</dict>
+</plist>

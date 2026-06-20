@@ -1,0 +1,11 @@
+# Override model rates here. Values are USD per million tokens.
+# If a model is omitted, defaults from tokmon/pricing.py are used.
+# Cache fields are optional; default to input × {1.25, 2.00, 0.10}.
+#
+# Example:
+# [models."claude-opus-4-8"]
+# input = 5.00
+# output = 25.00
+# cache_write_5m = 6.25
+# cache_write_1h = 10.00
+# cache_read = 0.50

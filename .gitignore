@@ -1,0 +1,14 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.env
+.DS_Store
+tokmon.duckdb
+tokmon.duckdb.wal
+.pytest_cache/
+.coverage
+htmlcov/
+dist/
+build/

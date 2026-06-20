@@ -1,0 +1,18 @@
+[Unit]
+Description=tokmon dashboard (uvicorn)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/tokmon-app
+Environment=PYTHONUNBUFFERED=1
+Environment=DUCKDB_MEMORY_LIMIT=1GB
+Environment=DUCKDB_THREADS=2
+ExecStart=%h/tokmon-app/.venv/bin/uvicorn tokmon.server:app --host 0.0.0.0 --port 8765 --log-level warning
+Restart=on-failure
+RestartSec=5
+MemoryMax=1500M
+
+[Install]
+WantedBy=default.target

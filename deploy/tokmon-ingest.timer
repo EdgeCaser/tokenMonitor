@@ -1,0 +1,12 @@
+[Unit]
+Description=Run tokmon ingest every 10 minutes
+Documentation=https://github.com/Edgecaser/tokenMonitor
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=10min
+Persistent=true
+Unit=tokmon-ingest.service
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,16 @@
+[Unit]
+Description=tokmon one-shot ingest of synced JSONL transcripts
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/tokmon-app
+Environment=PYTHONUNBUFFERED=1
+Environment=DUCKDB_MEMORY_LIMIT=2GB
+Environment=DUCKDB_THREADS=2
+Environment=DUCKDB_PRESERVE_INSERTION_ORDER=0
+ExecStart=%h/tokmon-app/.venv/bin/tokmon ingest
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=5
+# Hard ceiling — kernel kills us before we drag the Pi down.
+MemoryMax=3G

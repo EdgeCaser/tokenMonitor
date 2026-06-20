@@ -1,0 +1,348 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>tokmon dashboard</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; }
+  .tab.active { background: rgb(15 23 42); color: white; }
+  .num { font-variant-numeric: tabular-nums; }
+</style>
+</head>
+<body class="bg-slate-50 text-slate-900">
+
+<div class="max-w-7xl mx-auto p-6 space-y-6">
+
+  <header class="flex items-center justify-between">
+    <h1 class="text-2xl font-bold">tokmon</h1>
+    <div class="flex items-center gap-3">
+      <label class="text-sm text-slate-600">since</label>
+      <select id="since" class="border rounded px-2 py-1 text-sm bg-white">
+        <option value="all">all time</option>
+        <option value="7d">7d</option>
+        <option value="30d">30d</option>
+        <option value="24h">24h</option>
+      </select>
+    </div>
+  </header>
+
+  <nav class="flex gap-2 border-b">
+    <button class="tab active px-4 py-2 rounded-t text-sm font-medium" data-tab="overview">Overview</button>
+    <button class="tab px-4 py-2 rounded-t text-sm font-medium" data-tab="projects">Projects</button>
+    <button class="tab px-4 py-2 rounded-t text-sm font-medium" data-tab="sessions">Sessions</button>
+    <button class="tab px-4 py-2 rounded-t text-sm font-medium" data-tab="tools">Tools</button>
+    <button class="tab px-4 py-2 rounded-t text-sm font-medium" data-tab="cache">Cache</button>
+    <button class="tab px-4 py-2 rounded-t text-sm font-medium" data-tab="spend">Spend</button>
+  </nav>
+
+  <!-- OVERVIEW -->
+  <section data-pane="overview" class="space-y-6">
+    <div class="grid grid-cols-4 gap-4">
+      <div class="bg-white rounded shadow p-4">
+        <div class="text-xs uppercase text-slate-500">turns</div>
+        <div id="t-turns" class="num text-3xl font-bold">—</div>
+      </div>
+      <div class="bg-white rounded shadow p-4">
+        <div class="text-xs uppercase text-slate-500">sessions</div>
+        <div id="t-sessions" class="num text-3xl font-bold">—</div>
+      </div>
+      <div class="bg-white rounded shadow p-4">
+        <div class="text-xs uppercase text-slate-500">projects</div>
+        <div id="t-projects" class="num text-3xl font-bold">—</div>
+      </div>
+      <div class="bg-white rounded shadow p-4">
+        <div class="text-xs uppercase text-slate-500">total spend</div>
+        <div id="t-spend" class="num text-3xl font-bold text-emerald-700">—</div>
+      </div>
+    </div>
+
+    <div class="bg-white rounded shadow p-4">
+      <h2 class="font-semibold mb-3">Daily spend</h2>
+      <canvas id="chart-daily" height="80"></canvas>
+    </div>
+
+    <div class="grid grid-cols-2 gap-4">
+      <div class="bg-white rounded shadow p-4">
+        <h2 class="font-semibold mb-3">Top projects</h2>
+        <table class="w-full text-sm">
+          <thead><tr class="text-slate-500 text-left">
+            <th>project</th><th class="text-right">turns</th><th class="text-right">$</th>
+          </tr></thead>
+          <tbody id="t-top-projects"></tbody>
+        </table>
+      </div>
+      <div class="bg-white rounded shadow p-4">
+        <h2 class="font-semibold mb-3">Top models</h2>
+        <table class="w-full text-sm">
+          <thead><tr class="text-slate-500 text-left">
+            <th>model</th><th class="text-right">turns</th><th class="text-right">$</th>
+          </tr></thead>
+          <tbody id="t-top-models"></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- PROJECTS -->
+  <section data-pane="projects" class="hidden bg-white rounded shadow p-4">
+    <h2 class="font-semibold mb-3">All projects</h2>
+    <table class="w-full text-sm">
+      <thead><tr class="text-slate-500 text-left">
+        <th>project</th><th class="text-right">sessions</th>
+        <th class="text-right">turns</th><th class="text-right">tokens</th>
+        <th class="text-right">$ spend</th>
+      </tr></thead>
+      <tbody id="t-projects-all"></tbody>
+    </table>
+  </section>
+
+  <!-- SESSIONS -->
+  <section data-pane="sessions" class="hidden space-y-4">
+    <div class="bg-white rounded shadow p-4">
+      <h2 class="font-semibold mb-3">All sessions</h2>
+      <table class="w-full text-sm">
+        <thead><tr class="text-slate-500 text-left">
+          <th>session</th><th>project</th>
+          <th class="text-right">turns</th><th class="text-right">tokens</th>
+          <th class="text-right">$ spend</th>
+        </tr></thead>
+        <tbody id="t-sessions-all"></tbody>
+      </table>
+    </div>
+    <div id="session-detail" class="hidden bg-white rounded shadow p-4">
+      <h2 class="font-semibold mb-3">Session detail</h2>
+      <table class="w-full text-sm">
+        <thead><tr class="text-slate-500 text-left">
+          <th>ts</th><th>model</th>
+          <th class="text-right">in</th><th class="text-right">out</th>
+          <th class="text-right">cw</th><th class="text-right">cr</th>
+          <th class="text-right">$</th><th class="text-right">tools</th>
+        </tr></thead>
+        <tbody id="t-session-detail"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- TOOLS -->
+  <section data-pane="tools" class="hidden space-y-4">
+    <div class="bg-white rounded shadow p-4">
+      <canvas id="chart-tools" height="80"></canvas>
+    </div>
+    <div class="bg-white rounded shadow p-4">
+      <table class="w-full text-sm">
+        <thead><tr class="text-slate-500 text-left">
+          <th>tool</th><th class="text-right">calls</th>
+          <th class="text-right">turns using</th><th class="text-right">input chars</th>
+        </tr></thead>
+        <tbody id="t-tools"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- CACHE -->
+  <section data-pane="cache" class="hidden bg-white rounded shadow p-4">
+    <h2 class="font-semibold mb-3">Cache efficiency by model</h2>
+    <table class="w-full text-sm">
+      <thead><tr class="text-slate-500 text-left">
+        <th>model</th>
+        <th class="text-right">cache read</th><th class="text-right">cache write</th>
+        <th class="text-right">uncached input</th><th class="text-right">hit %</th>
+      </tr></thead>
+      <tbody id="t-cache"></tbody>
+    </table>
+  </section>
+
+  <!-- SPEND -->
+  <section data-pane="spend" class="hidden bg-white rounded shadow p-4">
+    <div class="flex items-center gap-3 mb-3">
+      <label class="text-sm text-slate-600">group by</label>
+      <select id="spend-by" class="border rounded px-2 py-1 text-sm bg-white">
+        <option value="day">day</option>
+        <option value="model">model</option>
+        <option value="project">project</option>
+      </select>
+    </div>
+    <canvas id="chart-spend" height="80"></canvas>
+  </section>
+
+</div>
+
+<script>
+const fmtInt = (n) => (n == null ? "—" : Number(n).toLocaleString());
+const fmtUsd = (x) => (x == null ? "—" : "$" + Number(x).toFixed(x < 0.01 ? 4 : 2));
+const $ = (s) => document.querySelector(s);
+
+let charts = {};
+function destroyChart(name) {
+  if (charts[name]) { charts[name].destroy(); delete charts[name]; }
+}
+
+async function api(path) {
+  const r = await fetch(path);
+  if (!r.ok) throw new Error(path + " " + r.status);
+  return r.json();
+}
+
+function setActive(name) {
+  document.querySelectorAll(".tab").forEach(b => b.classList.toggle("active", b.dataset.tab === name));
+  document.querySelectorAll("[data-pane]").forEach(p => p.classList.toggle("hidden", p.dataset.pane !== name));
+  load(name);
+}
+
+document.querySelectorAll(".tab").forEach(b => b.addEventListener("click", () => setActive(b.dataset.tab)));
+$("#since").addEventListener("change", () => load(currentTab()));
+$("#spend-by").addEventListener("change", () => load("spend"));
+
+function currentTab() {
+  return document.querySelector(".tab.active").dataset.tab;
+}
+const since = () => $("#since").value;
+
+async function load(tab) {
+  if (tab === "overview")   await loadOverview();
+  if (tab === "projects")   await loadProjects();
+  if (tab === "sessions")   await loadSessions();
+  if (tab === "tools")      await loadTools();
+  if (tab === "cache")      await loadCache();
+  if (tab === "spend")      await loadSpend();
+}
+
+async function loadOverview() {
+  const s = await api(`/api/summary?since=${since()}`);
+  $("#t-turns").textContent    = fmtInt(s.turns);
+  $("#t-sessions").textContent = fmtInt(s.sessions);
+  $("#t-projects").textContent = fmtInt(s.projects);
+  $("#t-spend").textContent    = fmtUsd(s.total_usd);
+
+  const days = await api(`/api/spend?by=day&since=${since()}&limit=120`);
+  days.reverse();
+  destroyChart("daily");
+  charts.daily = new Chart($("#chart-daily"), {
+    type: "line",
+    data: {
+      labels: days.map(d => d.day),
+      datasets: [{ label: "$ spend",
+                   data: days.map(d => d.usd),
+                   borderColor: "rgb(16,185,129)",
+                   backgroundColor: "rgba(16,185,129,0.15)",
+                   fill: true, tension: 0.2 }],
+    },
+    options: { plugins: { legend: { display: false } } },
+  });
+
+  const projs = await api(`/api/spend?by=project&since=${since()}&limit=10`);
+  $("#t-top-projects").innerHTML = projs.map(p =>
+    `<tr><td>${p.project_label}</td>
+        <td class="text-right num">${fmtInt(p.turns)}</td>
+        <td class="text-right num">${fmtUsd(p.usd)}</td></tr>`).join("");
+
+  const models = await api(`/api/spend?by=model&since=${since()}&limit=10`);
+  $("#t-top-models").innerHTML = models.map(m =>
+    `<tr><td>${m.model}</td>
+        <td class="text-right num">${fmtInt(m.turns)}</td>
+        <td class="text-right num">${fmtUsd(m.usd)}</td></tr>`).join("");
+}
+
+async function loadProjects() {
+  const projs = await api(`/api/spend?by=project&since=${since()}&limit=200`);
+  $("#t-projects-all").innerHTML = projs.map(p =>
+    `<tr class="border-t hover:bg-slate-50 cursor-pointer" data-project="${encodeURIComponent(p.project_path)}">
+       <td class="py-1">${p.project_label}</td>
+       <td class="text-right num">—</td>
+       <td class="text-right num">${fmtInt(p.turns)}</td>
+       <td class="text-right num">${fmtInt(p.tokens)}</td>
+       <td class="text-right num">${fmtUsd(p.usd)}</td>
+     </tr>`).join("");
+}
+
+async function loadSessions() {
+  const ss = await api(`/api/spend?by=session&since=${since()}&limit=200`);
+  $("#t-sessions-all").innerHTML = ss.map(s =>
+    `<tr class="border-t hover:bg-slate-50 cursor-pointer" data-session="${s.session_id}">
+       <td class="py-1 font-mono text-xs">${s.session_id.slice(0,8)}…${s.session_id.slice(-4)}</td>
+       <td>${s.project || ''}</td>
+       <td class="text-right num">${fmtInt(s.turns)}</td>
+       <td class="text-right num">${fmtInt(s.tokens)}</td>
+       <td class="text-right num">${fmtUsd(s.usd)}</td>
+     </tr>`).join("");
+  document.querySelectorAll("[data-session]").forEach(tr => {
+    tr.addEventListener("click", () => showSession(tr.dataset.session));
+  });
+}
+
+async function showSession(sid) {
+  const rows = await api(`/api/sessions/${sid}`);
+  $("#session-detail").classList.remove("hidden");
+  $("#t-session-detail").innerHTML = rows.map(r =>
+    `<tr class="border-t">
+       <td class="py-1">${r.ts ? r.ts.slice(0,16).replace('T',' ') : '—'}</td>
+       <td>${r.model}</td>
+       <td class="text-right num">${fmtInt(r.input_tokens)}</td>
+       <td class="text-right num">${fmtInt(r.output_tokens)}</td>
+       <td class="text-right num">${fmtInt(r.cache_write)}</td>
+       <td class="text-right num">${fmtInt(r.cache_read)}</td>
+       <td class="text-right num">${fmtUsd(r.total_usd)}</td>
+       <td class="text-right num">${fmtInt(r.tools)}</td>
+     </tr>`).join("");
+}
+
+async function loadTools() {
+  const tools = await api(`/api/spend?by=tool`);
+  destroyChart("tools");
+  charts.tools = new Chart($("#chart-tools"), {
+    type: "bar",
+    data: {
+      labels: tools.slice(0,20).map(t => t.tool_name),
+      datasets: [{ label: "calls",
+                   data: tools.slice(0,20).map(t => t.calls),
+                   backgroundColor: "rgba(59,130,246,0.6)" }],
+    },
+    options: { plugins: { legend: { display: false } } },
+  });
+  $("#t-tools").innerHTML = tools.map(t =>
+    `<tr class="border-t"><td class="py-1">${t.tool_name}</td>
+       <td class="text-right num">${fmtInt(t.calls)}</td>
+       <td class="text-right num">${fmtInt(t.turns_using)}</td>
+       <td class="text-right num">${fmtInt(t.input_chars)}</td></tr>`).join("");
+}
+
+async function loadCache() {
+  const rows = await api("/api/cache");
+  $("#t-cache").innerHTML = rows.map(r =>
+    `<tr class="border-t"><td class="py-1">${r.model}</td>
+       <td class="text-right num">${fmtInt(r.cache_read)}</td>
+       <td class="text-right num">${fmtInt(r.cache_write)}</td>
+       <td class="text-right num">${fmtInt(r.uncached_input)}</td>
+       <td class="text-right num">${(r.cache_hit_pct ?? 0).toFixed(1)}%</td></tr>`).join("");
+}
+
+async function loadSpend() {
+  const by = $("#spend-by").value;
+  const rows = await api(`/api/spend?by=${by}&since=${since()}&limit=200`);
+  const label = by === "day"
+                  ? rows.map(r => r.day)
+                  : by === "model"
+                    ? rows.map(r => r.model)
+                    : rows.map(r => r.project_label);
+  destroyChart("spend");
+  charts.spend = new Chart($("#chart-spend"), {
+    type: by === "day" ? "line" : "bar",
+    data: {
+      labels: label,
+      datasets: [{ label: "$ spend",
+                   data: rows.map(r => r.usd),
+                   backgroundColor: "rgba(99,102,241,0.6)",
+                   borderColor: "rgba(99,102,241,1)",
+                   fill: true, tension: 0.2 }],
+    },
+    options: { plugins: { legend: { display: false } } },
+  });
+}
+
+loadOverview();
+</script>
+</body>
+</html>
