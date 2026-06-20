@@ -68,7 +68,11 @@
 
     <div class="bg-white rounded shadow p-4">
       <h2 class="font-semibold mb-3">Daily spend</h2>
-      <canvas id="chart-daily" height="80"></canvas>
+      <div class="overflow-x-auto">
+        <div id="chart-daily-wrap" style="min-width: 100%;">
+          <canvas id="chart-daily" height="80"></canvas>
+        </div>
+      </div>
     </div>
 
     <div class="grid grid-cols-2 gap-4">
@@ -173,7 +177,11 @@
         <option value="project">project</option>
       </select>
     </div>
-    <canvas id="chart-spend" height="80"></canvas>
+    <div class="overflow-x-auto">
+      <div id="chart-spend-wrap" style="min-width: 100%;">
+        <canvas id="chart-spend" height="80"></canvas>
+      </div>
+    </div>
   </section>
 
 </div>
@@ -213,20 +221,31 @@ const host  = () => $("#host").value;
 const hostQ = () => host() ? `&host=${encodeURIComponent(host())}` : "";
 
 // Pick the right time bucket for the overview chart based on the since window.
-// Anything 24h or shorter buckets by hour; longer windows by day.
+// 1h, 6h, 24h, 7d → hour bucket (with horizontal scroll for longer ranges)
+// 30d, all → day bucket
 function autoBucket() {
   const s = since();
-  if (s.endsWith("h")) return "hour";
+  if (s === "1h" || s === "6h" || s === "24h" || s === "7d") return "hour";
   return "day";
 }
 function autoBucketLimit() {
-  return autoBucket() === "hour" ? 720 : 365;  // 30 days of hours or 1 yr of days
+  return autoBucket() === "hour" ? 720 : 365;
 }
 function fmtBucketLabel(s) {
   // "2026-06-20T15:00:00" → "06-20 15:00"; "2026-06-20" → "06-20"
   if (!s) return "";
   if (s.length >= 13) return s.slice(5, 10) + " " + s.slice(11, 16);
   return s.slice(5);
+}
+
+// Make the chart canvas wider than its container so wrapper scrolls horizontally.
+// 30 px per data point is a comfortable minimum for hourly bars.
+function fitChartWidth(wrapEl, nPoints) {
+  if (!wrapEl) return;
+  const minPerPoint = 30;
+  const containerW = wrapEl.parentElement.clientWidth;
+  const neededW = nPoints * minPerPoint;
+  wrapEl.style.minWidth = neededW > containerW ? neededW + "px" : "100%";
 }
 
 async function populateHostDropdown() {
@@ -265,6 +284,7 @@ async function loadOverview() {
   rows.reverse();
   const labels = rows.map(r => fmtBucketLabel(r[bucket]));
   destroyChart("daily");
+  fitChartWidth($("#chart-daily-wrap"), labels.length);
   charts.daily = new Chart($("#chart-daily"), {
     type: "line",
     data: {
@@ -275,11 +295,15 @@ async function loadOverview() {
                    backgroundColor: "rgba(16,185,129,0.15)",
                    fill: true, tension: 0.2 }],
     },
-    options: { plugins: { legend: { display: false } },
-               scales: { x: { ticks: { maxTicksLimit: 24 } } } },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: { x: { ticks: { maxRotation: 60, minRotation: 0, autoSkip: true, maxTicksLimit: 48 } } },
+    },
   });
-  // Update the chart heading to reflect the bucket
-  const chartHeading = document.querySelector("[data-pane='overview'] canvas").previousElementSibling;
+  // Update the chart heading
+  const chartHeading = document.querySelector("[data-pane='overview'] h2");
   if (chartHeading) chartHeading.textContent = bucket === "hour" ? "Hourly spend" : "Daily spend";
 
   const projs = await api(`/api/spend?by=project&since=${since()}&limit=10${hostQ()}`);
@@ -381,6 +405,7 @@ async function loadSpend() {
                       ? rows.map(r => r.model)
                       : rows.map(r => r.project_label);
   destroyChart("spend");
+  fitChartWidth($("#chart-spend-wrap"), label.length);
   charts.spend = new Chart($("#chart-spend"), {
     type: (by === "day" || by === "hour") ? "line" : "bar",
     data: {
@@ -392,8 +417,10 @@ async function loadSpend() {
                    fill: true, tension: 0.2 }],
     },
     options: {
+      responsive: true,
+      maintainAspectRatio: false,
       plugins: { legend: { display: false } },
-      scales: { x: { ticks: { maxTicksLimit: 24 } } },
+      scales: { x: { ticks: { maxRotation: 60, autoSkip: true, maxTicksLimit: 48 } } },
     },
   });
 }
