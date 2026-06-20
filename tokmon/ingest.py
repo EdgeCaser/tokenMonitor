@@ -287,6 +287,7 @@ def incremental(
     # (the Pi has only ~6 GiB and a 10k-turn full ingest OOM'd as one big txn).
     # A file failing rolls back only that file's inserts; ingest_log isn't
     # updated for it, so the next run retries from the same offset.
+    file_count = 0
     for root_path, host_label in resolved_roots:
         if not root_path.exists():
             continue
@@ -299,6 +300,12 @@ def incremental(
                 conn.execute("ROLLBACK")
                 print(f"[tokmon] error on {f}: {e}", file=__import__('sys').stderr)
                 # continue with other files rather than abort the whole run
+            file_count += 1
+            # Force flush every 10 files so DuckDB drops its in-memory page
+            # cache. Without this the WAL grows unbounded on low-RAM hosts.
+            if file_count % 10 == 0:
+                conn.execute("CHECKPOINT")
+    conn.execute("CHECKPOINT")
     after_turns = conn.execute("SELECT COUNT(*) FROM turns").fetchone()[0]
     after_user = conn.execute("SELECT COUNT(*) FROM user_turns").fetchone()[0]
     after_tools = conn.execute("SELECT COUNT(*) FROM tool_calls").fetchone()[0]

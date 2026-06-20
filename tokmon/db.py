@@ -90,13 +90,28 @@ def _migrate_add_host_column(conn) -> None:
     conn.execute("CREATE INDEX IF NOT EXISTS idx_turns_host ON turns(host);")
 
 
-def connect(db_path: Path | None = None) -> duckdb.DuckDBPyConnection:
+def connect(
+    db_path: Path | None = None,
+    read_only: bool = False,
+) -> duckdb.DuckDBPyConnection:
+    """Open a DuckDB connection.
+
+    DuckDB allows one writer + many readers across processes, but only if the
+    readers are explicitly opened read-only. The FastAPI server should always
+    pass read_only=True so the ingest service can run alongside it.
+    """
     path = db_path or DEFAULT_DB_PATH
     path.parent.mkdir(parents=True, exist_ok=True)
-    conn = duckdb.connect(str(path))
-    # Constrain on low-memory hosts (the Pi has ~6 GiB; DuckDB will grab it all
-    # by default and OOM mid-ingest). Set DUCKDB_MEMORY_LIMIT=2GB / DUCKDB_THREADS=2
-    # in the systemd unit on the Pi.
+    if read_only and not path.exists():
+        # Bootstrap an empty schema so the read-only connection has something
+        # to open. Use a brief read-write connection.
+        boot = duckdb.connect(str(path))
+        boot.execute(SCHEMA_SQL)
+        _migrate_add_host_column(boot)
+        boot.close()
+    conn = duckdb.connect(str(path), read_only=read_only)
+    # Constrain on low-memory hosts (Pi has 6 GiB; DuckDB grabs it all by
+    # default). Set DUCKDB_MEMORY_LIMIT / DUCKDB_THREADS in the systemd unit.
     mem = os.environ.get("DUCKDB_MEMORY_LIMIT")
     if mem:
         conn.execute(f"SET memory_limit = '{mem}'")
@@ -105,8 +120,9 @@ def connect(db_path: Path | None = None) -> duckdb.DuckDBPyConnection:
         conn.execute(f"SET threads = {int(threads)}")
     if os.environ.get("DUCKDB_PRESERVE_INSERTION_ORDER", "1") == "0":
         conn.execute("SET preserve_insertion_order = false")
-    conn.execute(SCHEMA_SQL)
-    _migrate_add_host_column(conn)
+    if not read_only:
+        conn.execute(SCHEMA_SQL)
+        _migrate_add_host_column(conn)
     return conn
 
 

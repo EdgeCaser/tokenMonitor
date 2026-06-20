@@ -19,7 +19,7 @@ def _rows_to_dicts(rows, keys):
 
 @app.get("/api/summary")
 def api_summary(since: str = Query("all")):
-    conn = A.connect_with_views()
+    conn = A.connect_with_views(read_only=True)
     return A.summary(conn, since=since)
 
 
@@ -29,7 +29,7 @@ def api_spend(
     since: str = Query("all"),
     limit: int = Query(50),
 ):
-    conn = A.connect_with_views()
+    conn = A.connect_with_views(read_only=True)
     rows = A.spend_by(conn, by, since=since, limit=limit)
     keymap = {
         "project": ["project_label", "project_path", "turns", "tokens", "usd"],
@@ -50,7 +50,7 @@ def api_spend(
 
 @app.get("/api/top")
 def api_top(metric: str = "cost", n: int = 20, since: str = "all"):
-    conn = A.connect_with_views()
+    conn = A.connect_with_views(read_only=True)
     rows = A.top_turns(conn, metric=metric, n=n, since=since)
     keys = ["uuid", "ts", "project", "session_id", "model",
             "input_tokens", "output_tokens", "cache_write", "cache_read", "total_usd"]
@@ -62,7 +62,7 @@ def api_top(metric: str = "cost", n: int = 20, since: str = "all"):
 
 @app.get("/api/projects/{name_or_path}")
 def api_project(name_or_path: str):
-    conn = A.connect_with_views()
+    conn = A.connect_with_views(read_only=True)
     data = A.project_drilldown(conn, name_or_path)
     if not data:
         raise HTTPException(404, "no such project")
@@ -84,7 +84,7 @@ def api_project(name_or_path: str):
 
 @app.get("/api/sessions/{session_id}")
 def api_session(session_id: str):
-    conn = A.connect_with_views()
+    conn = A.connect_with_views(read_only=True)
     rows = A.session_trace(conn, session_id)
     if not rows:
         raise HTTPException(404, "no such session")
@@ -98,7 +98,7 @@ def api_session(session_id: str):
 
 @app.get("/api/cache")
 def api_cache():
-    conn = A.connect_with_views()
+    conn = A.connect_with_views(read_only=True)
     rows = A.cache_efficiency(conn)
     return _rows_to_dicts(rows,
                           ["model", "cache_read", "cache_write",
@@ -107,7 +107,7 @@ def api_cache():
 
 @app.get("/api/timeseries")
 def api_timeseries(bucket: str = "day", since: str = "all"):
-    conn = A.connect_with_views()
+    conn = A.connect_with_views(read_only=True)
     rows = A.timeseries(conn, bucket=bucket, since=since)
     out = []
     for b, m, t, u in rows:

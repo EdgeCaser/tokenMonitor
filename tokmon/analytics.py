@@ -48,7 +48,7 @@ def _register_pricing(conn: duckdb.DuckDBPyConnection) -> None:
 
 
 VIEW_SQL = """
-CREATE OR REPLACE VIEW v_turn_cost AS
+CREATE OR REPLACE TEMP VIEW v_turn_cost AS
 SELECT
     t.uuid,
     t.session_id,
@@ -80,7 +80,7 @@ FROM turns t
 LEFT JOIN _pricing p ON p.model = t.model
 CROSS JOIN (SELECT * FROM _pricing WHERE model = '<fallback>') f;
 
-CREATE OR REPLACE VIEW v_session_summary AS
+CREATE OR REPLACE TEMP VIEW v_session_summary AS
 SELECT
     session_id,
     ANY_VALUE(project_label) AS project_label,
@@ -97,7 +97,7 @@ SELECT
 FROM v_turn_cost
 GROUP BY session_id;
 
-CREATE OR REPLACE VIEW v_project_summary AS
+CREATE OR REPLACE TEMP VIEW v_project_summary AS
 SELECT
     project_path,
     ANY_VALUE(project_label) AS project_label,
@@ -112,7 +112,7 @@ SELECT
 FROM v_turn_cost
 GROUP BY project_path;
 
-CREATE OR REPLACE VIEW v_model_summary AS
+CREATE OR REPLACE TEMP VIEW v_model_summary AS
 SELECT
     model,
     COUNT(*) AS turns,
@@ -125,7 +125,7 @@ SELECT
 FROM v_turn_cost
 GROUP BY model;
 
-CREATE OR REPLACE VIEW v_daily_spend AS
+CREATE OR REPLACE TEMP VIEW v_daily_spend AS
 SELECT
     date_trunc('day', ts) AS day,
     model,
@@ -136,7 +136,7 @@ FROM v_turn_cost
 GROUP BY day, model
 ORDER BY day, model;
 
-CREATE OR REPLACE VIEW v_tool_rollup AS
+CREATE OR REPLACE TEMP VIEW v_tool_rollup AS
 SELECT
     tc.tool_name,
     COUNT(*)                AS calls,
@@ -147,7 +147,7 @@ FROM tool_calls tc
 GROUP BY tc.tool_name
 ORDER BY calls DESC;
 
-CREATE OR REPLACE VIEW v_cache_efficiency AS
+CREATE OR REPLACE TEMP VIEW v_cache_efficiency AS
 SELECT
     model,
     SUM(cache_read)     AS cache_read,
@@ -162,8 +162,11 @@ GROUP BY model;
 """
 
 
-def connect_with_views(db_path: Path | None = None) -> duckdb.DuckDBPyConnection:
-    conn = connect(db_path)
+def connect_with_views(
+    db_path: Path | None = None,
+    read_only: bool = False,
+) -> duckdb.DuckDBPyConnection:
+    conn = connect(db_path, read_only=read_only)
     _register_pricing(conn)
     conn.execute(VIEW_SQL)
     return conn
