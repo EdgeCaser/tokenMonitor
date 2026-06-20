@@ -53,7 +53,7 @@ function Write-Fail($msg)  { Write-Host "  $msg" -ForegroundColor Red }
 
 if (-not $PiUser -or -not $PiHost -or -not $PiPath) {
     Write-Fail "PiUser, PiHost, and PiPath are required."
-    Write-Host "Usage: .\deploy\setup-client-windows.ps1 -PiUser <u> -PiHost <h> -PiPath /home/<u>"
+    Write-Host 'Usage: .\deploy\setup-client-windows.ps1 -PiUser <u> -PiHost <h> -PiPath /home/<u>'
     exit 1
 }
 
@@ -78,18 +78,21 @@ Write-OK "python ${pyVer} at $($python.Source)"
 
 $ssh = Get-Command ssh -ErrorAction SilentlyContinue
 if (-not $ssh) {
-    Write-Fail "ssh not on PATH. Enable OpenSSH Client in Settings > Apps > Optional features."
+    Write-Fail 'ssh not on PATH. Enable OpenSSH Client in: Settings, Apps, Optional features.'
     exit 1
 }
 Write-OK "ssh at $($ssh.Source)"
 
 $rsync = Get-Command rsync -ErrorAction SilentlyContinue
 if (-not $rsync) {
-    Write-Fail "rsync not on PATH."
-    Write-Host "  Install one of:"
-    Write-Host "    scoop install rsync"
-    Write-Host "    winget install --id Cygnus.Cygwin     (full cygwin)"
-    Write-Host "    choco install rsync                   (Chocolatey)"
+    Write-Fail 'rsync not on PATH.'
+    Write-Host '  Easiest fix: install scoop (a lightweight package manager), then rsync:'
+    Write-Host '    Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser -Force'
+    Write-Host '    Invoke-RestMethod get.scoop.sh | Invoke-Expression'
+    Write-Host '    scoop install rsync'
+    Write-Host '  Alternatives:'
+    Write-Host '    choco install rsync               (Chocolatey)'
+    Write-Host '    winget install MSYS2.MSYS2        (MSYS2 + then pacman -S rsync inside MSYS2)'
     exit 1
 }
 Write-OK "rsync at $($rsync.Source)"
@@ -98,8 +101,9 @@ Write-OK "rsync at $($rsync.Source)"
 Write-Step "testing SSH to $PiUser@$PiHost"
 $sshTest = & ssh -o BatchMode=yes -o ConnectTimeout=5 "$PiUser@$PiHost" 'echo ok' 2>&1
 if ($LASTEXITCODE -ne 0) {
-    Write-Fail "SSH failed. Ensure Tailscale is up and your key is authorized on the Pi."
-    Write-Host "  To copy your key: type `$env:USERPROFILE\.ssh\id_ed25519.pub | ssh ${PiUser}@${PiHost} `"cat >> ~/.ssh/authorized_keys`""
+    Write-Fail 'SSH failed. Ensure Tailscale is up and your key is authorized on the Pi.'
+    $keyHint = 'type $env:USERPROFILE\.ssh\id_ed25519.pub | ssh ' + $PiUser + '@' + $PiHost + ' "cat >> ~/.ssh/authorized_keys"'
+    Write-Host "  To copy your key: $keyHint"
     exit 1
 }
 Write-OK "SSH"
@@ -184,5 +188,5 @@ Write-Step "done"
 Write-Host "    Pi dashboard:    http://${PiHost}:8765/"
 Write-Host "    Force a push:    $venvTokmon push"
 Write-Host "    Task status:     Get-ScheduledTask -TaskName tokmon-sync"
-Write-Host "    Remove task:     Unregister-ScheduledTask -TaskName tokmon-sync -Confirm:`$false"
+Write-Host '    Remove task:     Unregister-ScheduledTask -TaskName tokmon-sync -Confirm:$false'
 Write-Host "    Log (if any):    $logPath"
