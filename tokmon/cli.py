@@ -15,6 +15,17 @@ from . import analytics as A
 from . import config as cfg_mod
 from . import ingest as I
 
+# On Windows, stdout/stderr fall back to a legacy code page (cp1252) when output
+# is redirected (a Scheduled Task or a captured pipe), which makes rich crash on
+# non-ASCII glyphs (→ — …). Force UTF-8 so output never raises UnicodeEncodeError.
+# POSIX (macOS / the Pi) is left untouched.
+if os.name == "nt":
+    for _stream in (sys.stdout, sys.stderr):
+        try:
+            _stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, ValueError):
+            pass
+
 console = Console()
 
 

@@ -1,4 +1,4 @@
-#requires -version 5.1
+﻿#requires -version 5.1
 <#
 .SYNOPSIS
     Set up tokmon as a sync client on Windows.
@@ -11,11 +11,11 @@
       - Python 3.11 or newer (winget install Python.Python.3.12)
       - OpenSSH client (built-in on Windows 10/11; otherwise:
         Settings > Apps > Optional features > OpenSSH Client)
-      - rsync. Easiest install:
-          winget install --id Cygnus.Cygwin   # full cygwin
-        or
-          scoop install rsync                  # if you have scoop
-        Both put rsync on PATH after install.
+      - rsync AND ssh from MSYS2 (the native Windows OpenSSH cannot carry
+        rsync's protocol stream, so tokmon uses the MSYS2 ssh):
+          winget install --id MSYS2.MSYS2 -e
+          C:\msys64\usr\bin\pacman -S --noconfirm rsync openssh
+        Then add C:\msys64\usr\bin to PATH so rsync is found.
 
     Run from the repo root, in a regular (non-admin) PowerShell:
       .\deploy\setup-client-windows.ps1 -PiUser edgecaser -PiHost pi-gateway -PiPath /home/edgecaser
@@ -86,16 +86,28 @@ Write-OK "ssh at $($ssh.Source)"
 $rsync = Get-Command rsync -ErrorAction SilentlyContinue
 if (-not $rsync) {
     Write-Fail 'rsync not on PATH.'
-    Write-Host '  Easiest fix: install scoop (a lightweight package manager), then rsync:'
-    Write-Host '    Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser -Force'
-    Write-Host '    Invoke-RestMethod get.scoop.sh | Invoke-Expression'
-    Write-Host '    scoop install rsync'
-    Write-Host '  Alternatives:'
-    Write-Host '    choco install rsync               (Chocolatey)'
-    Write-Host '    winget install MSYS2.MSYS2        (MSYS2 + then pacman -S rsync inside MSYS2)'
+    Write-Host '  Install MSYS2, then add rsync and ssh inside it:'
+    Write-Host '    winget install --id MSYS2.MSYS2 -e'
+    Write-Host '    C:\msys64\usr\bin\pacman -S --noconfirm rsync openssh'
+    Write-Host '  Then add C:\msys64\usr\bin to your PATH and re-run this script.'
     exit 1
 }
 Write-OK "rsync at $($rsync.Source)"
+
+# The MSYS2/Cygwin rsync cannot drive native Windows OpenSSH (the protocol
+# stream closes with 0 bytes, rsync error 12). tokmon points rsync at the
+# MSYS2/Cygwin ssh (/usr/bin/ssh), so that ssh must sit next to rsync.
+$rsyncDir = Split-Path -Parent $rsync.Source
+$isUnixRsync = (Test-Path (Join-Path $rsyncDir 'msys-2.0.dll')) -or `
+               (Test-Path (Join-Path $rsyncDir 'cygwin1.dll'))
+if ($isUnixRsync) {
+    if (-not (Test-Path (Join-Path $rsyncDir 'ssh.exe'))) {
+        Write-Fail 'rsync is the MSYS2/Cygwin build but its ssh is missing.'
+        Write-Host "    Install it:  $rsyncDir\pacman -S --noconfirm openssh"
+        exit 1
+    }
+    Write-OK "ssh for rsync at $rsyncDir\ssh.exe"
+}
 
 # --- 2. SSH reachability ------------------------------------------------------
 Write-Step "testing SSH to $PiUser@$PiHost"

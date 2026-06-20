@@ -15,6 +15,7 @@ Config file shape (~/.tokmon/sync.toml):
 from __future__ import annotations
 
 import os
+import re
 import socket
 import subprocess
 import sys
@@ -92,6 +93,7 @@ def build_rsync_cmd(
     source: Path,
     ssh_options: list[str] | None = None,
     dry_run: bool = False,
+    rsh: str | None = None,
 ) -> list[str]:
     """Construct the rsync invocation. Pure — for tests."""
     cmd = ["rsync", "-a", "--partial",
@@ -100,11 +102,43 @@ def build_rsync_cmd(
            "--exclude=*"]
     if dry_run:
         cmd.append("--dry-run")
-    if ssh_options:
+    if rsh:
+        cmd.extend(["-e", rsh])
+    elif ssh_options:
         cmd.extend(["-e", "ssh " + " ".join(ssh_options)])
     cmd.append(f"{source.rstrip('/') if isinstance(source, str) else str(source).rstrip('/')}/")
     cmd.append(f"{target.ssh_dest}:{target.remote_root}")
     return cmd
+
+
+def _default_rsh() -> str | None:
+    """Remote shell rsync should use, or None to let rsync pick `ssh` from PATH.
+
+    On Windows the rsync we ship is the MSYS2 build, and it cannot drive the
+    native Windows OpenSSH for its binary protocol (the stream closes with
+    0 bytes, rsync error 12). Point it at the MSYS2 ssh instead, which finds the
+    user's keys because MSYS2 resolves HOME to %USERPROFILE%.
+    """
+    if os.name != "nt":
+        return None
+    return "/usr/bin/ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new"
+
+
+def _to_rsync_source(source: Path) -> str:
+    """Render a local source path for rsync.
+
+    On Windows the rsync we ship is the MSYS2/Cygwin build, which reads a path
+    like ``C:\\Users\\me`` as a remote host named ``C``. Convert a Windows path
+    to a cygwin path (``C:\\Users\\me`` -> ``/c/Users/me``) so the local source
+    is unambiguous. On POSIX the path is returned unchanged.
+    """
+    if os.name != "nt":
+        return str(source)
+    s = str(source)
+    m = re.match(r"^([A-Za-z]):[\\/](.*)$", s)
+    if m:
+        return "/" + m.group(1).lower() + "/" + m.group(2).replace("\\", "/")
+    return s.replace("\\", "/")
 
 
 def _ensure_remote_dir(target: SyncTarget, verbose: bool = False) -> int:
@@ -135,7 +169,8 @@ def push(
         if rc != 0:
             print(f"tokmon push: mkdir on remote failed (ssh exit {rc})", file=sys.stderr)
             return rc
-    cmd = build_rsync_cmd(target, source, dry_run=dry_run)
+    cmd = build_rsync_cmd(target, _to_rsync_source(source), dry_run=dry_run,
+                          rsh=_default_rsh())
     if verbose:
         cmd.insert(1, "-v")
         print("running:", " ".join(cmd), file=sys.stderr)

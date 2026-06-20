@@ -11,7 +11,9 @@ def test_build_rsync_cmd_basic():
     assert cmd[0] == "rsync"
     assert "--include=*.jsonl" in cmd
     assert "--exclude=*" in cmd
-    assert cmd[-2] == "/home/laptop/.claude/projects/"
+    # normalize separators so the assertion holds on Windows too, where
+    # str(Path("/home/...")) yields backslashes
+    assert cmd[-2].replace("\\", "/") == "/home/laptop/.claude/projects/"
     assert cmd[-1].startswith("ian@pi.local:/home/ian/sync/")
     assert cmd[-1].endswith("/.claude/projects/")
 

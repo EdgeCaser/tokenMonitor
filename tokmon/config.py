@@ -63,20 +63,31 @@ def load(path: Path | None = None) -> Config:
     return cfg
 
 
+def _toml_str(value: object) -> str:
+    """Render a value as a TOML basic string, escaping backslashes and quotes.
+
+    Critical on Windows: paths contain backslashes (C:\\Users\\...) that TOML
+    would otherwise read as escape sequences (\\U -> invalid). A no-op for
+    POSIX paths, which have no backslashes.
+    """
+    s = str(value).replace("\\", "\\\\").replace('"', '\\"')
+    return f'"{s}"'
+
+
 def save(cfg: Config, path: Path | None = None) -> None:
     path = path or DEFAULT_CONFIG_PATH
     path.parent.mkdir(parents=True, exist_ok=True)
     lines = [
         "# tokmon config. Manipulate via `tokmon roots add/remove/list`.",
         "",
-        f'default_projects_dir = "{cfg.default_projects_dir}"',
-        f'default_host = "{cfg.default_host}"',
+        f"default_projects_dir = {_toml_str(cfg.default_projects_dir)}",
+        f"default_host = {_toml_str(cfg.default_host)}",
         "",
     ]
     for r in cfg.extra_roots:
         lines.append("[[roots]]")
-        lines.append(f'path = "{r.path}"')
-        lines.append(f'host = "{r.host}"')
+        lines.append(f"path = {_toml_str(r.path)}")
+        lines.append(f"host = {_toml_str(r.host)}")
         lines.append("")
     path.write_text("\n".join(lines))
 
