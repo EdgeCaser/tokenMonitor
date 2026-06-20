@@ -19,6 +19,11 @@
   <header class="flex items-center justify-between">
     <h1 class="text-2xl font-bold">tokmon</h1>
     <div class="flex items-center gap-3">
+      <label class="text-sm text-slate-600">host</label>
+      <select id="host" class="border rounded px-2 py-1 text-sm bg-white">
+        <option value="">all hosts</option>
+        <!-- populated from /api/spend?by=host -->
+      </select>
       <label class="text-sm text-slate-600">since</label>
       <select id="since" class="border rounded px-2 py-1 text-sm bg-white">
         <option value="all">all time</option>
@@ -194,12 +199,30 @@ function setActive(name) {
 
 document.querySelectorAll(".tab").forEach(b => b.addEventListener("click", () => setActive(b.dataset.tab)));
 $("#since").addEventListener("change", () => load(currentTab()));
+$("#host").addEventListener("change", () => load(currentTab()));
 $("#spend-by").addEventListener("change", () => load("spend"));
 
 function currentTab() {
   return document.querySelector(".tab.active").dataset.tab;
 }
 const since = () => $("#since").value;
+const host  = () => $("#host").value;
+const hostQ = () => host() ? `&host=${encodeURIComponent(host())}` : "";
+
+async function populateHostDropdown() {
+  const sel = $("#host");
+  if (sel.options.length > 1) return;  // already populated
+  try {
+    const rows = await api("/api/spend?by=host");
+    for (const r of rows) {
+      const opt = document.createElement("option");
+      opt.value = r.host;
+      opt.textContent = `${r.host}  (${fmtUsd(r.usd)})`;
+      sel.appendChild(opt);
+    }
+  } catch (e) { /* ignore — empty dashboard */ }
+}
+populateHostDropdown();
 
 async function load(tab) {
   if (tab === "overview")   await loadOverview();
@@ -211,13 +234,13 @@ async function load(tab) {
 }
 
 async function loadOverview() {
-  const s = await api(`/api/summary?since=${since()}`);
+  const s = await api(`/api/summary?since=${since()}${hostQ()}`);
   $("#t-turns").textContent    = fmtInt(s.turns);
   $("#t-sessions").textContent = fmtInt(s.sessions);
   $("#t-projects").textContent = fmtInt(s.projects);
   $("#t-spend").textContent    = fmtUsd(s.total_usd);
 
-  const days = await api(`/api/spend?by=day&since=${since()}&limit=120`);
+  const days = await api(`/api/spend?by=day&since=${since()}&limit=120${hostQ()}`);
   days.reverse();
   destroyChart("daily");
   charts.daily = new Chart($("#chart-daily"), {
@@ -233,13 +256,13 @@ async function loadOverview() {
     options: { plugins: { legend: { display: false } } },
   });
 
-  const projs = await api(`/api/spend?by=project&since=${since()}&limit=10`);
+  const projs = await api(`/api/spend?by=project&since=${since()}&limit=10${hostQ()}`);
   $("#t-top-projects").innerHTML = projs.map(p =>
     `<tr><td>${p.project_label}</td>
         <td class="text-right num">${fmtInt(p.turns)}</td>
         <td class="text-right num">${fmtUsd(p.usd)}</td></tr>`).join("");
 
-  const models = await api(`/api/spend?by=model&since=${since()}&limit=10`);
+  const models = await api(`/api/spend?by=model&since=${since()}&limit=10${hostQ()}`);
   $("#t-top-models").innerHTML = models.map(m =>
     `<tr><td>${m.model}</td>
         <td class="text-right num">${fmtInt(m.turns)}</td>
@@ -247,7 +270,7 @@ async function loadOverview() {
 }
 
 async function loadProjects() {
-  const projs = await api(`/api/spend?by=project&since=${since()}&limit=200`);
+  const projs = await api(`/api/spend?by=project&since=${since()}&limit=200${hostQ()}`);
   $("#t-projects-all").innerHTML = projs.map(p =>
     `<tr class="border-t hover:bg-slate-50 cursor-pointer" data-project="${encodeURIComponent(p.project_path)}">
        <td class="py-1">${p.project_label}</td>
@@ -259,7 +282,7 @@ async function loadProjects() {
 }
 
 async function loadSessions() {
-  const ss = await api(`/api/spend?by=session&since=${since()}&limit=200`);
+  const ss = await api(`/api/spend?by=session&since=${since()}&limit=200${hostQ()}`);
   $("#t-sessions-all").innerHTML = ss.map(s =>
     `<tr class="border-t hover:bg-slate-50 cursor-pointer" data-session="${s.session_id}">
        <td class="py-1 font-mono text-xs">${s.session_id.slice(0,8)}…${s.session_id.slice(-4)}</td>
@@ -290,7 +313,7 @@ async function showSession(sid) {
 }
 
 async function loadTools() {
-  const tools = await api(`/api/spend?by=tool`);
+  const tools = await api(`/api/spend?by=tool${hostQ()}`);
   destroyChart("tools");
   charts.tools = new Chart($("#chart-tools"), {
     type: "bar",
@@ -310,7 +333,7 @@ async function loadTools() {
 }
 
 async function loadCache() {
-  const rows = await api("/api/cache");
+  const rows = await api(`/api/cache${hostQ() ? "?" + hostQ().slice(1) : ""}`);
   $("#t-cache").innerHTML = rows.map(r =>
     `<tr class="border-t"><td class="py-1">${r.model}</td>
        <td class="text-right num">${fmtInt(r.cache_read)}</td>
@@ -321,7 +344,7 @@ async function loadCache() {
 
 async function loadSpend() {
   const by = $("#spend-by").value;
-  const rows = await api(`/api/spend?by=${by}&since=${since()}&limit=200`);
+  const rows = await api(`/api/spend?by=${by}&since=${since()}&limit=200${hostQ()}`);
   const label = by === "day"
                   ? rows.map(r => r.day)
                   : by === "model"

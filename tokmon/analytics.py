@@ -186,10 +186,30 @@ def parse_since(since: str | None) -> datetime | None:
     raise ValueError(f"unrecognized --since: {since!r}")
 
 
-def summary(conn: duckdb.DuckDBPyConnection, since: str | None = None) -> dict:
+def _build_filter(
+    since: str | None = None,
+    host: str | None = None,
+) -> tuple[str, list]:
+    """Return (where_clause, params) for the standard since+host filter."""
+    clauses = []
+    params: list = []
     cutoff = parse_since(since)
-    where = "WHERE ts >= ?" if cutoff else ""
-    params = [cutoff] if cutoff else []
+    if cutoff:
+        clauses.append("ts >= ?")
+        params.append(cutoff)
+    if host:
+        clauses.append("host = ?")
+        params.append(host)
+    where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+    return where, params
+
+
+def summary(
+    conn: duckdb.DuckDBPyConnection,
+    since: str | None = None,
+    host: str | None = None,
+) -> dict:
+    where, params = _build_filter(since, host)
     totals = conn.execute(
         f"""
         SELECT
@@ -221,10 +241,12 @@ def spend_by(
     dimension: str,
     since: str | None = None,
     limit: int = 50,
+    host: str | None = None,
 ) -> list[tuple]:
-    cutoff = parse_since(since)
-    where = "WHERE ts >= ?" if cutoff else ""
-    params = [cutoff] if cutoff else []
+    # When the dimension *is* host, ignore the host filter (the breakdown
+    # already shows per-host; filtering would collapse it to one row).
+    effective_host = None if dimension == "host" else host
+    where, params = _build_filter(since, effective_host)
 
     if dimension == "project":
         q = f"""
@@ -260,13 +282,27 @@ def spend_by(
             GROUP BY session_id ORDER BY usd DESC LIMIT {limit}
         """
     elif dimension == "tool":
-        q = """
-            SELECT tool_name, COUNT(*) AS calls, COUNT(DISTINCT turn_uuid) AS turns_using,
-                   SUM(input_chars) AS input_chars
-            FROM tool_calls
-            GROUP BY tool_name ORDER BY calls DESC LIMIT 50
-        """
-        params = []
+        # tool_calls table joins via turn_uuid → can filter on host through turns
+        if host:
+            q = """
+                SELECT tc.tool_name, COUNT(*) AS calls,
+                       COUNT(DISTINCT tc.turn_uuid) AS turns_using,
+                       SUM(tc.input_chars) AS input_chars
+                FROM tool_calls tc
+                JOIN turns t ON t.uuid = tc.turn_uuid
+                WHERE t.host = ?
+                GROUP BY tc.tool_name ORDER BY calls DESC LIMIT 50
+            """
+            params = [host]
+        else:
+            q = """
+                SELECT tool_name, COUNT(*) AS calls,
+                       COUNT(DISTINCT turn_uuid) AS turns_using,
+                       SUM(input_chars) AS input_chars
+                FROM tool_calls
+                GROUP BY tool_name ORDER BY calls DESC LIMIT 50
+            """
+            params = []
     elif dimension == "host":
         q = f"""
             SELECT host, COUNT(DISTINCT session_id) AS sessions, COUNT(*) AS turns,
@@ -286,10 +322,9 @@ def top_turns(
     metric: str = "cost",
     n: int = 20,
     since: str | None = None,
+    host: str | None = None,
 ) -> list[tuple]:
-    cutoff = parse_since(since)
-    where = "WHERE ts >= ?" if cutoff else ""
-    params = [cutoff] if cutoff else []
+    where, params = _build_filter(since, host)
     order_by = {
         "cost": "total_usd",
         "tokens": "(input_tokens + output_tokens + cache_write_5m + cache_write_1h + cache_read)",
@@ -365,7 +400,30 @@ def session_trace(conn: duckdb.DuckDBPyConnection, session_id: str) -> list[tupl
     ).fetchall()
 
 
-def cache_efficiency(conn: duckdb.DuckDBPyConnection) -> list[tuple]:
+def cache_efficiency(
+    conn: duckdb.DuckDBPyConnection,
+    host: str | None = None,
+) -> list[tuple]:
+    if host:
+        # Recompute the rollup with a host filter rather than using the view,
+        # which doesn't pre-group by host.
+        return conn.execute(
+            """
+            SELECT model,
+                   SUM(cache_read) AS cache_read,
+                   SUM(cache_write_5m + cache_write_1h) AS cache_write,
+                   SUM(input_tokens) AS uncached_input,
+                   CASE WHEN SUM(cache_read + cache_write_5m + cache_write_1h) > 0
+                        THEN 100.0 * SUM(cache_read)
+                             / SUM(cache_read + cache_write_5m + cache_write_1h)
+                        ELSE 0 END AS cache_hit_pct
+            FROM v_turn_cost
+            WHERE host = ?
+            GROUP BY model
+            ORDER BY cache_read DESC
+            """,
+            [host],
+        ).fetchall()
     return conn.execute(
         """
         SELECT model, cache_read, cache_write, uncached_input, cache_hit_pct
@@ -379,10 +437,9 @@ def timeseries(
     conn: duckdb.DuckDBPyConnection,
     bucket: str = "day",
     since: str | None = None,
+    host: str | None = None,
 ) -> list[tuple]:
-    cutoff = parse_since(since)
-    where = "WHERE ts >= ?" if cutoff else ""
-    params = [cutoff] if cutoff else []
+    where, params = _build_filter(since, host)
     return conn.execute(
         f"""
         SELECT CAST(date_trunc(?, ts) AS DATE) AS bucket, model,

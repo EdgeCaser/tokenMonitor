@@ -18,9 +18,9 @@ def _rows_to_dicts(rows, keys):
 
 
 @app.get("/api/summary")
-def api_summary(since: str = Query("all")):
+def api_summary(since: str = Query("all"), host: str | None = Query(None)):
     conn = A.connect_with_views(read_only=True)
-    return A.summary(conn, since=since)
+    return A.summary(conn, since=since, host=host)
 
 
 @app.get("/api/spend")
@@ -28,9 +28,10 @@ def api_spend(
     by: str = Query("project"),
     since: str = Query("all"),
     limit: int = Query(50),
+    host: str | None = Query(None),
 ):
     conn = A.connect_with_views(read_only=True)
-    rows = A.spend_by(conn, by, since=since, limit=limit)
+    rows = A.spend_by(conn, by, since=since, limit=limit, host=host)
     keymap = {
         "project": ["project_label", "project_path", "turns", "tokens", "usd"],
         "model":   ["model", "turns", "tokens", "usd"],
@@ -49,9 +50,10 @@ def api_spend(
 
 
 @app.get("/api/top")
-def api_top(metric: str = "cost", n: int = 20, since: str = "all"):
+def api_top(metric: str = "cost", n: int = 20, since: str = "all",
+            host: str | None = Query(None)):
     conn = A.connect_with_views(read_only=True)
-    rows = A.top_turns(conn, metric=metric, n=n, since=since)
+    rows = A.top_turns(conn, metric=metric, n=n, since=since, host=host)
     keys = ["uuid", "ts", "project", "session_id", "model",
             "input_tokens", "output_tokens", "cache_write", "cache_read", "total_usd"]
     out = _rows_to_dicts(rows, keys)
@@ -97,18 +99,19 @@ def api_session(session_id: str):
 
 
 @app.get("/api/cache")
-def api_cache():
+def api_cache(host: str | None = Query(None)):
     conn = A.connect_with_views(read_only=True)
-    rows = A.cache_efficiency(conn)
+    rows = A.cache_efficiency(conn, host=host)
     return _rows_to_dicts(rows,
                           ["model", "cache_read", "cache_write",
                            "uncached_input", "cache_hit_pct"])
 
 
 @app.get("/api/timeseries")
-def api_timeseries(bucket: str = "day", since: str = "all"):
+def api_timeseries(bucket: str = "day", since: str = "all",
+                   host: str | None = Query(None)):
     conn = A.connect_with_views(read_only=True)
-    rows = A.timeseries(conn, bucket=bucket, since=since)
+    rows = A.timeseries(conn, bucket=bucket, since=since, host=host)
     out = []
     for b, m, t, u in rows:
         out.append({"bucket": str(b), "model": m, "turns": t, "usd": u})
