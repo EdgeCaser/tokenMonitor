@@ -10,6 +10,44 @@
   body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; }
   .tab.active { background: rgb(15 23 42); color: white; }
   .num { font-variant-numeric: tabular-nums; }
+
+  /* "?" tooltip — hover the icon to see definition + why-care */
+  .tip {
+    position: relative;
+    display: inline-block;
+    margin-left: 4px;
+    width: 14px; height: 14px;
+    background: rgb(226, 232, 240);
+    color: rgb(71, 85, 105);
+    border-radius: 50%;
+    text-align: center;
+    font-size: 10px;
+    line-height: 14px;
+    cursor: help;
+    vertical-align: middle;
+    user-select: none;
+  }
+  .tip:hover { background: rgb(15, 23, 42); color: white; }
+  .tip:hover::after {
+    content: attr(data-tip);
+    position: absolute;
+    bottom: calc(100% + 6px); left: 50%;
+    transform: translateX(-50%);
+    background: rgb(15, 23, 42);
+    color: white;
+    padding: 8px 12px;
+    border-radius: 6px;
+    font-size: 12px;
+    line-height: 1.45;
+    white-space: pre-wrap;
+    max-width: 320px;
+    width: max-content;
+    z-index: 50;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.25);
+    text-align: left;
+    font-weight: normal;
+  }
+  .subhead { font-size: 11px; color: rgb(100, 116, 139); margin-top: 4px; }
 </style>
 </head>
 <body class="bg-slate-50 text-slate-900">
@@ -53,36 +91,58 @@
   <section data-pane="overview" class="space-y-6">
     <div class="grid grid-cols-3 gap-4">
       <div class="bg-white rounded shadow p-4">
-        <div class="text-xs uppercase text-slate-500">turns</div>
+        <div class="text-xs uppercase text-slate-500">
+          turns
+          <span class="tip" data-tip="What: total Claude assistant responses (one per round-trip).&#10;Why care: Volume gauge. Combine with sessions to get turns-per-session — high values mean deep focused work, low values mean quick check-ins.">?</span>
+        </div>
         <div id="t-turns" class="num text-3xl font-bold">—</div>
       </div>
       <div class="bg-white rounded shadow p-4">
-        <div class="text-xs uppercase text-slate-500">sessions</div>
+        <div class="text-xs uppercase text-slate-500">
+          sessions
+          <span class="tip" data-tip="What: distinct Claude Code conversations (one per `claude` invocation).&#10;Why care: How often you reach for Claude. Spread across a few long sessions or many short ones tells you about your usage style.">?</span>
+        </div>
         <div id="t-sessions" class="num text-3xl font-bold">—</div>
       </div>
       <div class="bg-white rounded shadow p-4">
-        <div class="text-xs uppercase text-slate-500">total spend</div>
+        <div class="text-xs uppercase text-slate-500">
+          total spend
+          <span class="tip" data-tip="What: cumulative $ at published Anthropic per-million-token rates (Opus $5/$25, Sonnet $3/$15, Haiku $1/$5, cache write 1.25–2×, cache read 0.1×).&#10;Why care: This is what your usage would have cost at list prices. Compare with how much you actually pay if you're on a plan.">?</span>
+        </div>
         <div id="t-spend" class="num text-3xl font-bold text-emerald-700">—</div>
       </div>
       <div class="bg-emerald-50 rounded shadow p-4 border border-emerald-200">
-        <div class="text-xs uppercase text-emerald-700">cache saved</div>
+        <div class="text-xs uppercase text-emerald-700">
+          cache saved
+          <span class="tip" data-tip="What: $ you would have paid extra if every cache_read token had been full-price input. Anthropic prices cache_read at 0.1× input, so savings = 9× actual cache_read cost.&#10;Why care: Your prompt-caching ROI. A high % means your prompts are stable enough that Anthropic's prefix-match cache pays off — small changes in early tokens invalidate the cache, so this number quietly rewards good prompt hygiene.">?</span>
+        </div>
         <div id="t-cache-saved" class="num text-3xl font-bold text-emerald-700">—</div>
         <div id="t-cache-saved-pct" class="text-xs text-emerald-700/70 mt-1">—</div>
       </div>
       <div class="bg-amber-50 rounded shadow p-4 border border-amber-200">
-        <div class="text-xs uppercase text-amber-700">burn rate (last 60m)</div>
+        <div class="text-xs uppercase text-amber-700">
+          burn rate (last 60m)
+          <span class="tip" data-tip="What: $-per-hour extrapolated from spend in the last 60 minutes.&#10;Why care: Live gauge. Compare to your daily-average rate (total spend ÷ days active) to see if today's session is unusually expensive. Big jumps usually mean a runaway agent or a long Opus session.">?</span>
+        </div>
         <div id="t-burn" class="num text-3xl font-bold text-amber-700">—</div>
         <div id="t-burn-sub" class="text-xs text-amber-700/70 mt-1">—</div>
       </div>
       <div class="bg-white rounded shadow p-4">
-        <div class="text-xs uppercase text-slate-500">projects</div>
+        <div class="text-xs uppercase text-slate-500">
+          projects
+          <span class="tip" data-tip="What: distinct working directories (cwd) Claude Code has run in.&#10;Why care: How many parallel workstreams Claude is helping with. The OneDrive vs local duplicates of the same project deduplicate cleanly because turn UUIDs collide.">?</span>
+        </div>
         <div id="t-projects" class="num text-3xl font-bold">—</div>
       </div>
     </div>
 
     <div class="grid grid-cols-2 gap-4">
       <div class="bg-white rounded shadow p-4">
-        <h2 class="font-semibold mb-3">This month's spend forecast</h2>
+        <h2 class="font-semibold mb-1">
+          This month's spend forecast
+          <span class="tip" data-tip="What: linear extrapolation — (month-to-date ÷ days elapsed) × days in this month.&#10;Why care: Catches escalating burn before the invoice surprises you. The 'vs same point last month' delta tells you whether you're trending up or down relative to your last full month.">?</span>
+        </h2>
+        <div class="subhead mb-3">Daily rate from this month projected to end-of-month.</div>
         <div class="flex items-end gap-4">
           <div>
             <div class="text-xs uppercase text-slate-500">month to date</div>
@@ -100,7 +160,11 @@
         </div>
       </div>
       <div class="bg-white rounded shadow p-4">
-        <h2 class="font-semibold mb-3">Achievements</h2>
+        <h2 class="font-semibold mb-1">
+          Achievements
+          <span class="tip" data-tip="What: streaks (consecutive days with ≥1 turn), hall-of-fame turn (most expensive single turn ever), and spend/turn milestone badges.&#10;Why care: Streak shows your habit pattern. The hall-of-fame turn is a flag for forensic investigation — single turns rarely exceed $1, so a $8+ turn is usually a stuck loop or massive prompt worth understanding.">?</span>
+        </h2>
+        <div class="subhead mb-3">Habit pattern + your most expensive single turn ever.</div>
         <div id="t-achievement-streak" class="text-sm mb-3">—</div>
         <div id="t-achievement-hof" class="text-xs text-slate-600 mb-3">—</div>
         <div id="t-achievement-badges" class="flex flex-wrap gap-2"></div>
@@ -109,7 +173,10 @@
 
     <div class="bg-white rounded shadow p-4">
       <div class="flex items-center justify-between mb-3">
-        <h2 class="font-semibold">Daily spend calendar (last 365 days)</h2>
+        <h2 class="font-semibold">
+          Daily spend calendar (last 365 days)
+          <span class="tip" data-tip="What: each square is one day, colored by total spend on that day (log-ish bucketed: lighter = lower, darker = higher).&#10;Why care: At-a-glance view of your work rhythm — vacations show up as gaps, sprints as dark clusters. Hover any square for the exact $ and turn count.">?</span>
+        </h2>
         <div class="flex items-center gap-2 text-xs text-slate-500">
           <span>less</span>
           <span class="inline-block w-3 h-3 bg-slate-100 border border-slate-200"></span>
@@ -126,7 +193,10 @@
     </div>
 
     <div class="bg-white rounded shadow p-4">
-      <h2 class="font-semibold mb-3">Daily spend</h2>
+      <h2 id="chart-daily-heading" class="font-semibold mb-3">
+        Daily spend
+        <span class="tip" data-tip="What: $ spent per time bucket.&#10;Why care: Shows when work intensified or dropped off. Combine with the host filter to see per-machine trends. With a 24h or 7d window, this auto-switches to hourly buckets so you can see intra-day patterns.">?</span>
+      </h2>
       <div class="overflow-x-auto" style="height: 260px;">
         <div id="chart-daily-wrap" style="min-width: 100%; height: 100%;">
           <canvas id="chart-daily"></canvas>
@@ -172,7 +242,11 @@
   <!-- SESSIONS -->
   <section data-pane="sessions" class="hidden space-y-4">
     <div class="bg-white rounded shadow p-4">
-      <h2 class="font-semibold mb-3">All sessions</h2>
+      <h2 class="font-semibold mb-1">
+        All sessions
+        <span class="tip" data-tip="What: every Claude Code session, sorted by spend.&#10;Why care: Sessions tagged 'outlier N×' are statistically expensive for their project — z-score ≥ 2 std-devs above that project's mean session cost (skips projects with <3 sessions to avoid noise). These are your forensic candidates — drill in to see what made them spike.">?</span>
+      </h2>
+      <div class="subhead mb-3">Click any session to see its turn-by-turn timeline. Amber chip = statistical outlier.</div>
       <table class="w-full text-sm">
         <thead><tr class="text-slate-500 text-left">
           <th>session</th><th>project</th>
@@ -202,10 +276,12 @@
       <canvas id="chart-tools" height="80"></canvas>
     </div>
     <div class="bg-white rounded shadow p-4">
-      <h2 class="font-semibold mb-3">Tool cost attribution</h2>
-      <div class="text-xs text-slate-500 mb-2">
-        "total $" = sum of every turn that called this tool (a turn can be counted under multiple tools).
-        Use it to rank tools by total cost they're associated with.
+      <h2 class="font-semibold mb-1">
+        Tool cost attribution
+        <span class="tip" data-tip="What: per-tool stats. A 'turn using' a tool is one assistant response that called that tool at least once. 'avg $/turn' and 'total $' are sums/means of those turns' total cost (not the tool's cost in isolation — Anthropic doesn't bill per tool).&#10;Why care: Find tools associated with expensive turns. Bash turns are typically pricier than Read turns because they consume more context. If a low-frequency tool has a high avg $/turn, that's a hint to look at whether it's running on bloated context.">?</span>
+      </h2>
+      <div class="subhead mb-3">
+        Attribution, not literal cost. A turn that uses both Bash and Read counts under both rows.
       </div>
       <table class="w-full text-sm">
         <thead><tr class="text-slate-500 text-left">
@@ -222,10 +298,12 @@
 
   <!-- BRANCHES -->
   <section data-pane="branches" class="hidden bg-white rounded shadow p-4">
-    <h2 class="font-semibold mb-3">Spend by git branch</h2>
-    <div class="text-xs text-slate-500 mb-2">
-      git_branch is captured per turn (when Claude Code records it). Use this to
-      tally what each feature branch actually cost.
+    <h2 class="font-semibold mb-1">
+      Spend by git branch
+      <span class="tip" data-tip="What: turn count and spend rolled up by (project × git branch). git_branch comes from Claude Code's per-turn capture — only present when Claude was invoked inside a git repo.&#10;Why care: Feature-level cost accounting. Useful for retros: 'how much did the auth refactor cost us?' or 'why was that exploratory branch so expensive?' Turns made outside a git repo are excluded.">?</span>
+    </h2>
+    <div class="subhead mb-3">
+      Per-branch cost attribution. Skips turns made outside a git repo.
     </div>
     <table class="w-full text-sm">
       <thead><tr class="text-slate-500 text-left">
@@ -241,7 +319,13 @@
   <!-- TURNS EXPLORER -->
   <section data-pane="turns" class="hidden space-y-4">
     <div class="bg-white rounded shadow p-4">
-      <h2 class="font-semibold mb-3">Turn explorer</h2>
+      <h2 class="font-semibold mb-1">
+        Turn explorer
+        <span class="tip" data-tip="What: every assistant response, filterable. Filter by model (exact id), project (label or full cwd), tool name, or minimum cost. Click any row to drop the raw Anthropic usage block + tool call previews beneath.&#10;Why care: Forensic drill-down. When the dashboard shows you a $8 turn, this is where you ask 'why?' — model, cache mix, what tool was running, and the exact usage block returned by the API.">?</span>
+      </h2>
+      <div class="subhead mb-3">
+        Forensic view. Click any row for the raw usage block.
+      </div>
       <div class="grid grid-cols-5 gap-3 mb-3 text-sm">
         <input id="t-flt-model"   placeholder="model (exact)"        class="border rounded px-2 py-1" />
         <input id="t-flt-project" placeholder="project label or path" class="border rounded px-2 py-1" />
@@ -274,10 +358,14 @@
   <!-- PATTERNS -->
   <section data-pane="patterns" class="hidden space-y-4">
     <div class="bg-white rounded shadow p-4">
-      <div class="flex items-center justify-between mb-3">
-        <h2 class="font-semibold">When you Claude — hour × day of week</h2>
+      <div class="flex items-center justify-between mb-1">
+        <h2 class="font-semibold">
+          When you Claude — hour × day of week
+          <span class="tip" data-tip="What: 7×24 grid (Sun–Sat × 00–23) colored by total turns in that bucket, all-time.&#10;Why care: Reveals your actual work rhythm. Are you a 9-to-5er, a night owl, a weekend warrior? Useful for deciding when to ship code reviews (peak Claude time = peak attention) and when you're actually 'off' (the dead zones).">?</span>
+        </h2>
         <div class="text-xs text-slate-500">color = turns; darker = busier</div>
       </div>
+      <div class="subhead mb-2">All-time turns aggregated by weekday + hour-of-day.</div>
       <div class="overflow-x-auto">
         <svg id="heatmap" width="800" height="280"></svg>
       </div>
@@ -298,7 +386,13 @@
 
   <!-- CACHE -->
   <section data-pane="cache" class="hidden bg-white rounded shadow p-4">
-    <h2 class="font-semibold mb-3">Cache efficiency by model</h2>
+    <h2 class="font-semibold mb-1">
+      Cache efficiency by model
+      <span class="tip" data-tip="Anthropic prompt caching: cache write costs 1.25× (5-min TTL) or 2× (1h TTL) input rate; cache read costs 0.1× input. So a turn that re-uses 100k cached tokens pays $0.50 instead of $5 (Opus).&#10;Why care: A high hit % means your prompts have a stable prefix — that's prompt-engineering hygiene. A high write-to-read ratio means you're paying the premium without earning the discount back; usually a sign of churning system prompts.">?</span>
+    </h2>
+    <div class="subhead mb-3">
+      cache read = served from cache (cheap). cache write = paid premium to populate cache. uncached input = full-price.
+    </div>
     <table class="w-full text-sm">
       <thead><tr class="text-slate-500 text-left">
         <th>model</th>
@@ -704,9 +798,13 @@ async function loadOverview() {
       scales: { x: { ticks: { maxRotation: 60, minRotation: 0, autoSkip: true, maxTicksLimit: 48 } } },
     },
   });
-  // Update the chart heading
-  const chartHeading = document.querySelector("[data-pane='overview'] h2");
-  if (chartHeading) chartHeading.textContent = bucket === "hour" ? "Hourly spend" : "Daily spend";
+  // Update the chart heading (target the line-chart h2 specifically, not the
+  // first h2 in Overview which is now the Forecast card).
+  const chartHeading = document.getElementById("chart-daily-heading");
+  if (chartHeading) {
+    const label = bucket === "hour" ? "Hourly spend" : "Daily spend";
+    chartHeading.firstChild.textContent = label + " ";
+  }
 
   const projs = await api(`/api/spend?by=project&since=${since()}&limit=10${hostQ()}`);
   $("#t-top-projects").innerHTML = projs.map(p =>
