@@ -33,13 +33,14 @@ def api_spend(
     conn = A.connect_with_views(read_only=True)
     rows = A.spend_by(conn, by, since=since, limit=limit, host=host)
     keymap = {
-        "project": ["project_label", "project_path", "turns", "tokens", "usd"],
-        "model":   ["model", "turns", "tokens", "usd"],
-        "day":     ["day", "turns", "tokens", "usd"],
-        "hour":    ["hour", "turns", "tokens", "usd"],
-        "session": ["session_id", "project", "turns", "tokens", "usd"],
-        "tool":    ["tool_name", "calls", "turns_using", "input_chars"],
-        "host":    ["host", "sessions", "turns", "tokens", "usd"],
+        "project":       ["project_label", "project_path", "turns", "tokens", "usd"],
+        "project_label": ["project_label", "paths", "turns", "tokens", "usd"],
+        "model":         ["model", "turns", "tokens", "usd"],
+        "day":           ["day", "turns", "tokens", "usd"],
+        "hour":          ["hour", "turns", "tokens", "usd"],
+        "session":       ["session_id", "project", "turns", "tokens", "usd"],
+        "tool":          ["tool_name", "calls", "turns_using", "input_chars"],
+        "host":          ["host", "sessions", "turns", "tokens", "usd"],
     }
     if by not in keymap:
         raise HTTPException(400, f"unknown by={by}")

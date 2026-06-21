@@ -228,13 +228,24 @@
 
   <!-- PROJECTS -->
   <section data-pane="projects" class="hidden bg-white rounded shadow p-4">
-    <h2 class="font-semibold mb-3">All projects</h2>
+    <div class="flex items-center justify-between mb-1">
+      <h2 class="font-semibold">
+        All projects
+        <span class="tip" data-tip="What: spend rolled up by cwd (Claude Code's working dir at session start).&#10;Why care: Where the money goes. By default rows merge same-named projects across machines (e.g., memsync on Mac+Pi+Windows = 1 row). Toggle 'group by path' to see them separately — useful when the same name covers genuinely different repos.">?</span>
+      </h2>
+      <label class="text-sm text-slate-600 flex items-center gap-2">
+        group by
+        <select id="projects-group" class="border rounded px-2 py-1 text-sm bg-white">
+          <option value="project_label">name (merge across machines)</option>
+          <option value="project">full path (one row per cwd)</option>
+        </select>
+      </label>
+    </div>
+    <div class="subhead mb-3">
+      <span id="projects-merge-note"></span>
+    </div>
     <table class="w-full text-sm">
-      <thead><tr class="text-slate-500 text-left">
-        <th>project</th><th class="text-right">sessions</th>
-        <th class="text-right">turns</th><th class="text-right">tokens</th>
-        <th class="text-right">$ spend</th>
-      </tr></thead>
+      <thead id="t-projects-head"></thead>
       <tbody id="t-projects-all"></tbody>
     </table>
   </section>
@@ -820,16 +831,51 @@ async function loadOverview() {
 }
 
 async function loadProjects() {
-  const projs = await api(`/api/spend?by=project&since=${since()}&limit=200${hostQ()}`);
-  $("#t-projects-all").innerHTML = projs.map(p =>
-    `<tr class="border-t hover:bg-slate-50 cursor-pointer" data-project="${encodeURIComponent(p.project_path)}">
-       <td class="py-1">${p.project_label}</td>
-       <td class="text-right num">—</td>
-       <td class="text-right num">${fmtInt(p.turns)}</td>
-       <td class="text-right num">${fmtInt(p.tokens)}</td>
-       <td class="text-right num">${fmtUsd(p.usd)}</td>
-     </tr>`).join("");
+  const groupBy = $("#projects-group").value;  // "project_label" or "project"
+  const rows = await api(`/api/spend?by=${groupBy}&since=${since()}&limit=200${hostQ()}`);
+  const head = $("#t-projects-head");
+  const tbody = $("#t-projects-all");
+  if (groupBy === "project_label") {
+    head.innerHTML = `<tr class="text-slate-500 text-left">
+      <th>project</th><th class="text-right">paths</th>
+      <th class="text-right">turns</th><th class="text-right">tokens</th>
+      <th class="text-right">$ spend</th></tr>`;
+    tbody.innerHTML = rows.map(p =>
+      `<tr class="border-t hover:bg-slate-50">
+         <td class="py-1">${p.project_label}</td>
+         <td class="text-right num">${p.paths > 1
+            ? `<span class="text-xs bg-indigo-100 text-indigo-800 px-2 rounded">${p.paths}</span>`
+            : p.paths}</td>
+         <td class="text-right num">${fmtInt(p.turns)}</td>
+         <td class="text-right num">${fmtInt(p.tokens)}</td>
+         <td class="text-right num">${fmtUsd(p.usd)}</td>
+       </tr>`).join("");
+    const merged = rows.filter(r => r.paths > 1).length;
+    $("#projects-merge-note").textContent = merged
+      ? `${merged} project${merged > 1 ? "s" : ""} span multiple paths — switch to 'full path' to see them separately.`
+      : "All projects have a single path; toggle has no effect right now.";
+  } else {
+    head.innerHTML = `<tr class="text-slate-500 text-left">
+      <th>project</th><th>path</th>
+      <th class="text-right">turns</th><th class="text-right">tokens</th>
+      <th class="text-right">$ spend</th></tr>`;
+    tbody.innerHTML = rows.map(p =>
+      `<tr class="border-t hover:bg-slate-50">
+         <td class="py-1">${p.project_label}</td>
+         <td class="text-xs text-slate-500 font-mono">${p.project_path || ''}</td>
+         <td class="text-right num">${fmtInt(p.turns)}</td>
+         <td class="text-right num">${fmtInt(p.tokens)}</td>
+         <td class="text-right num">${fmtUsd(p.usd)}</td>
+       </tr>`).join("");
+    $("#projects-merge-note").textContent = "Showing one row per working directory.";
+  }
 }
+
+// Wire the group-by toggle (after DOM ready)
+document.addEventListener("DOMContentLoaded", () => {
+  const sel = $("#projects-group");
+  if (sel) sel.addEventListener("change", () => loadProjects());
+});
 
 async function loadSessions() {
   const [ss, outliers] = await Promise.all([

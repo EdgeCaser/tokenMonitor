@@ -90,6 +90,45 @@ def _migrate_add_host_column(conn) -> None:
     conn.execute("CREATE INDEX IF NOT EXISTS idx_turns_host ON turns(host);")
 
 
+def _migrate_normalize_project_labels(conn) -> None:
+    """Re-derive project_label from project_path using the cross-platform
+    basename logic (split on / and \\). Idempotent — only updates rows whose
+    stored label differs from the recomputed one. Cheap to run on every
+    connect; usually a no-op.
+
+    A previous version of `_project_label_from_path` used os.path.basename,
+    which on POSIX hosts didn't split Windows-style paths, leaving labels
+    like `C:\\Users\\ianfe\\...\\memsync` instead of `memsync`.
+    """
+    # DuckDB regex needs the backslashes escaped twice (once for SQL, once for
+    # the regex engine).
+    sql = r"""
+        UPDATE turns
+        SET project_label = COALESCE(
+            NULLIF(
+                regexp_extract(rtrim(project_path, '/\'), '[^/\]+$', 0),
+                ''
+            ),
+            '<root>'
+        )
+        WHERE project_path IS NOT NULL
+          AND project_path <> ''
+          AND project_label <> COALESCE(
+              NULLIF(
+                  regexp_extract(rtrim(project_path, '/\'), '[^/\]+$', 0),
+                  ''
+              ),
+              '<root>'
+          )
+    """
+    try:
+        conn.execute(sql)
+    except Exception:
+        # Read-only connection (server) — skip silently. Ingest will fix it
+        # on the next write-mode connect.
+        pass
+
+
 def connect(
     db_path: Path | None = None,
     read_only: bool = False,
@@ -123,6 +162,7 @@ def connect(
     if not read_only:
         conn.execute(SCHEMA_SQL)
         _migrate_add_host_column(conn)
+        _migrate_normalize_project_labels(conn)
     return conn
 
 

@@ -257,6 +257,20 @@ def spend_by(
             GROUP BY project_label, project_path
             ORDER BY usd DESC LIMIT {limit}
         """
+    elif dimension == "project_label":
+        # Same logical project across machines collapses to one row.
+        # Returns extra `paths` column so the UI can show "3 paths" when
+        # the same label spans multiple cwds.
+        q = f"""
+            SELECT project_label,
+                   COUNT(DISTINCT project_path) AS paths,
+                   COUNT(*)                     AS turns,
+                   SUM(input_tokens+output_tokens+cache_write_5m+cache_write_1h+cache_read) AS tokens,
+                   SUM(total_usd) AS usd
+            FROM v_turn_cost {where}
+            GROUP BY project_label
+            ORDER BY usd DESC LIMIT {limit}
+        """
     elif dimension == "model":
         q = f"""
             SELECT model, COUNT(*) AS turns,

@@ -30,9 +30,14 @@ class IngestStats:
 
 
 def _project_label_from_path(path: str) -> str:
+    """Last path component, splitting on both / and \\ so Windows paths
+    (`C:\\Users\\ianfe\\...\\memsync`) yield 'memsync', not the whole string.
+    `os.path.basename` only understands the host OS's separator."""
     if not path:
         return "<unknown>"
-    return os.path.basename(path.rstrip("/")) or "<root>"
+    s = path.rstrip("/\\")
+    last_sep = max(s.rfind("/"), s.rfind("\\"))
+    return (s[last_sep + 1:] if last_sep >= 0 else s) or "<root>"
 
 
 def _parse_ts(value: str | None) -> datetime:
