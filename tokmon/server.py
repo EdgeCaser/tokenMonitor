@@ -219,6 +219,14 @@ def api_timeseries(bucket: str = "day", since: str = "all",
     return out
 
 
+@app.get("/api/quota")
+def api_quota(metric: str = Query("usd"), host: str | None = Query(None)):
+    if metric not in ("usd", "tokens"):
+        raise HTTPException(400, "metric must be 'usd' or 'tokens'")
+    conn = A.connect_with_views(read_only=True)
+    return A.quota_inference(conn, metric=metric, host=host)
+
+
 _WEB_DIR = Path(__file__).parent / "_web"
 if not _WEB_DIR.exists():
     # Dev install — fall back to repo-root /web sibling

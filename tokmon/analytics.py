@@ -972,3 +972,284 @@ def timeseries(
         """,
         [bucket, *params],
     ).fetchall()
+
+
+# ---------------------------------------------------------------------------
+# Quota inference
+# ---------------------------------------------------------------------------
+#
+# Anthropic enforces subscription usage in rolling windows (a ~5-hour window
+# that resets 5h after your first message in it, and a 7-day weekly window with
+# a separate smaller cap for Opus). The *size* of those quotas is never sent to
+# the client — there are no rate-limit headers in the Claude Code transcripts.
+# So we cannot read a quota off the data; we can only INFER it from the shape of
+# usage. The logic below rests on one idea:
+#
+#   The most usage that ever fit inside a window is a LOWER BOUND on that
+#   window's quota. If you repeatedly push usage up to roughly the same level
+#   and then stop — especially if you resume right when the window resets — that
+#   recurring level is the ceiling itself.
+#
+# We therefore (a) measure the peak usage per window (always a valid lower
+# bound) and (b) look for a *cluster* of near-peak windows plus "wall events"
+# (a near-peak window immediately followed by a pause that ends at the reset).
+# Clustering + walls promote a lower bound to an actual ceiling estimate with a
+# confidence label; without them we only report the lower bound.
+#
+# Unit: there is no published mapping from tokens to quota units. The best
+# single proxy is API-equivalent dollar cost, because the plans are loosely
+# benchmarked to "≈ $X of API value" and cached tokens are discounted in both
+# pricing and (per Anthropic's docs) quota accounting. `metric="tokens"` is
+# offered too, but it over-weights cache-heavy usage relative to the real quota.
+#
+# Quotas are per ACCOUNT, so this analysis combines every host by default — the
+# 5h/weekly windows are consumed by all your machines together.
+
+WINDOW_SECONDS = {
+    "5h": 5 * 3600,
+    "weekly": 7 * 24 * 3600,
+}
+
+
+def _sliding_window_peak(times: list[float], values: list[float], window_s: float) -> float:
+    """Max sum of values over any trailing window of width `window_s`.
+
+    Both lists are aligned and `times` is sorted ascending (epoch seconds).
+    The maximum sliding-window total is always achieved by a window whose right
+    edge sits on a data point, so scanning each point as the right edge is exact.
+    """
+    best = 0.0
+    cur = 0.0
+    left = 0
+    for right in range(len(times)):
+        cur += values[right]
+        while times[right] - times[left] > window_s:
+            cur -= values[left]
+            left += 1
+        if cur > best:
+            best = cur
+    return best
+
+
+def _fixed_blocks(times: list[float], values: list[float], window_s: float) -> list[dict]:
+    """Partition turns into reset-anchored blocks, mirroring how the windows
+    actually reset: a block opens on its first turn and closes `window_s` later;
+    the next turn after it opens a fresh block.
+    """
+    blocks: list[dict] = []
+    n = len(times)
+    i = 0
+    while i < n:
+        start = times[i]
+        reset = start + window_s
+        total = 0.0
+        last = start
+        j = i
+        while j < n and times[j] < reset:
+            total += values[j]
+            last = times[j]
+            j += 1
+        blocks.append({
+            "start": start,
+            "reset": reset,
+            "last": last,
+            "total": total,
+            "n_turns": j - i,
+            "next_turn": times[j] if j < n else None,
+        })
+        i = j
+    return blocks
+
+
+def _ceiling_from_blocks(blocks: list[dict], window_s: float) -> dict:
+    """Turn a set of reset-anchored blocks into a quota estimate.
+
+    Reports the peak (a hard lower bound) always, and a ceiling estimate only
+    when near-peak blocks cluster tightly and/or several "wall events" appear.
+    """
+    totals = sorted((b["total"] for b in blocks), reverse=True)
+    if not totals:
+        return {
+            "lower_bound": 0.0, "ceiling_estimate": None, "confidence": "none",
+            "n_blocks": 0, "n_near_peak": 0, "cluster_cv": None, "n_wall_events": 0,
+        }
+    peak = totals[0]
+    near = [t for t in totals if t >= 0.9 * peak]
+    n_near = len(near)
+    mean_near = sum(near) / n_near
+    if n_near > 1:
+        var = sum((x - mean_near) ** 2 for x in near) / (n_near - 1)
+        cv = (var ** 0.5) / mean_near if mean_near else 0.0
+    else:
+        cv = None
+
+    # A "wall event": a near-peak block whose work ran into the second half of
+    # the window and then paused until on/after the reset boundary — the
+    # signature of getting locked out and resuming when the quota refreshed.
+    tolerance = 0.2 * window_s
+    walls = 0
+    for b in blocks:
+        if b["total"] < 0.9 * peak or b["next_turn"] is None:
+            continue
+        ran_late = b["last"] >= b["reset"] - 0.5 * window_s
+        resumed_at_reset = b["reset"] <= b["next_turn"] <= b["reset"] + tolerance
+        if ran_late and resumed_at_reset:
+            walls += 1
+
+    if n_near >= 5 and cv is not None and cv < 0.08:
+        confidence = "high"
+    elif n_near >= 3 and (cv is None or cv < 0.15):
+        confidence = "medium"
+    else:
+        confidence = "low"
+    if walls >= 2 and confidence == "low":
+        confidence = "medium"  # repeated walls are strong even without tight CV
+
+    detected = confidence in ("high", "medium") or walls >= 2
+    return {
+        "lower_bound": peak,
+        "ceiling_estimate": mean_near if detected else None,
+        "confidence": confidence if detected else "none",
+        "n_blocks": len(blocks),
+        "n_near_peak": n_near,
+        "cluster_cv": cv,
+        "n_wall_events": walls,
+    }
+
+
+def _top_blocks(blocks: list[dict], n: int = 8) -> list[dict]:
+    from datetime import datetime, timezone
+    out = []
+    for b in sorted(blocks, key=lambda x: x["total"], reverse=True)[:n]:
+        out.append({
+            "start": datetime.fromtimestamp(b["start"], tz=timezone.utc).isoformat(),
+            "total": float(b["total"]),
+            "n_turns": int(b["n_turns"]),
+            "duration_hours": (b["last"] - b["start"]) / 3600.0,
+        })
+    return out
+
+
+def _window_report(times, values, window_s) -> dict:
+    blocks = _fixed_blocks(times, values, window_s)
+    report = _ceiling_from_blocks(blocks, window_s)
+    report["rolling_peak"] = _sliding_window_peak(times, values, window_s)
+    report["top_blocks"] = _top_blocks(blocks)
+    return report
+
+
+def quota_inference(
+    conn: duckdb.DuckDBPyConnection,
+    metric: str = "usd",
+    host: str | None = None,
+) -> dict:
+    """Infer the size of the 5-hour, weekly, and per-session quotas — and how
+    they have moved over time — from observed usage.
+
+    metric: "usd" (API-$ equivalent, the best proxy) or "tokens" (raw count).
+    host:   normally None — quotas are per-account, so all hosts are combined.
+            Pass a host only to inspect one machine's contribution.
+    """
+    if metric not in ("usd", "tokens"):
+        raise ValueError(f"metric must be 'usd' or 'tokens', got {metric!r}")
+    value_expr = (
+        "total_usd" if metric == "usd"
+        else "(input_tokens + output_tokens + cache_write_5m + cache_write_1h + cache_read)"
+    )
+    where = "WHERE host = ?" if host else ""
+    params = [host] if host else []
+    rows = conn.execute(
+        f"""
+        SELECT ts, model, session_id, {value_expr} AS val
+        FROM v_turn_cost
+        {where}
+        ORDER BY ts
+        """,
+        params,
+    ).fetchall()
+
+    notes = [
+        "Quotas are inferred, not measured: Claude Code transcripts carry no "
+        "rate-limit headers. Peak window usage is a hard lower bound; a ceiling "
+        "estimate appears only when near-peak windows cluster or repeat at reset.",
+        "Unit is API-$ equivalent — the closest available proxy for Anthropic's "
+        "internal quota accounting, not an official quota unit."
+        if metric == "usd" else
+        "Unit is raw token count, which over-weights cache-heavy usage relative "
+        "to the real quota; the $-equivalent metric tracks the quota more closely.",
+        "Per-account: all hosts are combined unless a host filter is set, because "
+        "the 5h and weekly windows are shared across every machine on the account.",
+    ]
+
+    if not rows:
+        return {
+            "metric": metric, "host": host, "data_range": None,
+            "windows": {}, "weekly_opus": None, "evolution": [], "notes": notes,
+        }
+
+    # Row layout: r = (ts, model, session_id, val)
+    times = [r[0].timestamp() for r in rows]
+    models = [r[1] or "" for r in rows]
+    session_ids = [r[2] for r in rows]
+    values = [float(r[3] or 0.0) for r in rows]
+
+    # --- time-window quotas (5h, weekly) over the whole account ---
+    windows = {
+        "5h": _window_report(times, values, WINDOW_SECONDS["5h"]),
+        "weekly": _window_report(times, values, WINDOW_SECONDS["weekly"]),
+    }
+
+    # --- per Claude Code session_id (no server quota; shown for completeness) ---
+    sess_totals: dict[str, float] = {}
+    for sid, v in zip(session_ids, values):
+        sess_totals[sid] = sess_totals.get(sid, 0.0) + v
+    sorted_sessions = sorted(sess_totals.values(), reverse=True)
+    windows["session"] = {
+        "lower_bound": sorted_sessions[0] if sorted_sessions else 0.0,
+        "ceiling_estimate": None,
+        "confidence": "none",
+        "n_blocks": len(sorted_sessions),
+        "note": "per Claude Code session_id — not an enforced server window; "
+                "Anthropic meters the 5h and weekly windows instead.",
+    }
+
+    # --- Opus-only weekly (Anthropic's separate, smaller Opus weekly cap) ---
+    opus_times = [t for t, m in zip(times, models) if "opus" in m.lower()]
+    opus_values = [v for v, m in zip(values, models) if "opus" in m.lower()]
+    weekly_opus = (
+        _window_report(opus_times, opus_values, WINDOW_SECONDS["weekly"])
+        if opus_times else None
+    )
+
+    # --- evolution: per-month peak window usage, to expose ceiling shifts ---
+    from collections import defaultdict
+    by_month_idx: dict[str, list[int]] = defaultdict(list)
+    for i, r in enumerate(rows):
+        by_month_idx[r[0].strftime("%Y-%m")].append(i)
+    evolution = []
+    for month in sorted(by_month_idx):
+        idxs = by_month_idx[month]
+        mt = [times[i] for i in idxs]
+        mv = [values[i] for i in idxs]
+        evolution.append({
+            "month": month,
+            "n_turns": len(idxs),
+            "total": float(sum(mv)),
+            "peak_5h": _sliding_window_peak(mt, mv, WINDOW_SECONDS["5h"]),
+            "peak_weekly": _sliding_window_peak(mt, mv, WINDOW_SECONDS["weekly"]),
+        })
+
+    return {
+        "metric": metric,
+        "host": host,
+        "data_range": {
+            "first_ts": rows[0][0].isoformat(),
+            "last_ts": rows[-1][0].isoformat(),
+            "n_turns": len(rows),
+            "n_days": (times[-1] - times[0]) / 86400.0,
+        },
+        "windows": windows,
+        "weekly_opus": weekly_opus,
+        "evolution": evolution,
+        "notes": notes,
+    }

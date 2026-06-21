@@ -46,6 +46,7 @@
     <button class="tab px-4 py-2 rounded-t text-sm font-medium" data-tab="branches">Branches</button>
     <button class="tab px-4 py-2 rounded-t text-sm font-medium" data-tab="turns">Turns</button>
     <button class="tab px-4 py-2 rounded-t text-sm font-medium" data-tab="spend">Spend</button>
+    <button class="tab px-4 py-2 rounded-t text-sm font-medium" data-tab="quotas">Quotas</button>
   </nav>
 
   <!-- OVERVIEW -->
@@ -326,6 +327,69 @@
     </div>
   </section>
 
+  <!-- QUOTAS -->
+  <section data-pane="quotas" class="hidden space-y-4">
+    <div class="bg-white rounded shadow p-4">
+      <div class="flex items-center justify-between">
+        <div>
+          <h2 class="font-semibold">Inferred quota ceilings</h2>
+          <div id="q-range" class="text-xs text-slate-500 mt-1">—</div>
+        </div>
+        <div class="flex items-center gap-2">
+          <label class="text-sm text-slate-600">unit</label>
+          <select id="q-metric" class="border rounded px-2 py-1 text-sm bg-white">
+            <option value="usd">API-$ equivalent</option>
+            <option value="tokens">raw tokens</option>
+          </select>
+        </div>
+      </div>
+    </div>
+
+    <div id="q-cards" class="grid grid-cols-4 gap-4"></div>
+
+    <div class="bg-white rounded shadow p-4">
+      <h2 class="font-semibold mb-1">How these ceilings moved over time</h2>
+      <div class="text-xs text-slate-500 mb-3">
+        Each point is the single biggest burst that month inside a 5-hour / 7-day
+        window. A flat top across months = a real ceiling; a step up or down = a
+        plan change or a policy change.
+      </div>
+      <div class="overflow-x-auto" style="height: 280px;">
+        <div id="q-evo-wrap" style="min-width: 100%; height: 100%;">
+          <canvas id="chart-quota-evo"></canvas>
+        </div>
+      </div>
+    </div>
+
+    <div class="grid grid-cols-2 gap-4">
+      <div class="bg-white rounded shadow p-4">
+        <h2 class="font-semibold mb-3">Biggest 5-hour windows</h2>
+        <table class="w-full text-sm">
+          <thead><tr class="text-slate-500 text-left">
+            <th>started</th><th class="text-right">usage</th>
+            <th class="text-right">turns</th><th class="text-right">span (h)</th>
+          </tr></thead>
+          <tbody id="q-blocks-5h"></tbody>
+        </table>
+      </div>
+      <div class="bg-white rounded shadow p-4">
+        <h2 class="font-semibold mb-3">Biggest weekly windows</h2>
+        <table class="w-full text-sm">
+          <thead><tr class="text-slate-500 text-left">
+            <th>started</th><th class="text-right">usage</th>
+            <th class="text-right">turns</th><th class="text-right">span (h)</th>
+          </tr></thead>
+          <tbody id="q-blocks-weekly"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="bg-slate-50 rounded border border-slate-200 p-4">
+      <h3 class="font-semibold text-sm mb-2">How to read this</h3>
+      <ul id="q-notes" class="text-xs text-slate-600 list-disc list-inside space-y-1"></ul>
+    </div>
+  </section>
+
 </div>
 
 <script>
@@ -354,6 +418,7 @@ document.querySelectorAll(".tab").forEach(b => b.addEventListener("click", () =>
 $("#since").addEventListener("change", () => load(currentTab()));
 $("#host").addEventListener("change", () => load(currentTab()));
 $("#spend-by").addEventListener("change", () => load("spend"));
+$("#q-metric").addEventListener("change", () => load("quotas"));
 
 function currentTab() {
   return document.querySelector(".tab.active").dataset.tab;
@@ -415,6 +480,7 @@ async function load(tab) {
   if (tab === "branches")   await loadBranches();
   if (tab === "turns")      await loadTurns();
   if (tab === "spend")      await loadSpend();
+  if (tab === "quotas")     await loadQuotas();
 }
 
 // Wire turn-explorer filter button + close
@@ -852,6 +918,120 @@ async function loadSpend() {
       maintainAspectRatio: false,
       plugins: { legend: { display: false } },
       scales: { x: { ticks: { maxRotation: 60, autoSkip: true, maxTicksLimit: 48 } } },
+    },
+  });
+}
+
+// === QUOTAS ===
+const CONF_STYLE = {
+  high:   { ring: "border-emerald-300 bg-emerald-50", text: "text-emerald-700", label: "high confidence" },
+  medium: { ring: "border-amber-300 bg-amber-50",     text: "text-amber-700",   label: "medium confidence" },
+  low:    { ring: "border-slate-200 bg-white",        text: "text-slate-500",   label: "low confidence" },
+  none:   { ring: "border-slate-200 bg-white",        text: "text-slate-500",   label: "not enough signal" },
+};
+
+function quotaFmt(v, metric) {
+  if (v == null) return "—";
+  return metric === "usd" ? fmtUsd(v) : fmtInt(Math.round(v));
+}
+
+function quotaCard(title, w, metric, subtitle) {
+  if (!w) {
+    return `<div class="rounded shadow p-4 border border-slate-200 bg-white">
+      <div class="text-xs uppercase text-slate-500">${title}</div>
+      <div class="num text-2xl font-bold mt-1">—</div>
+      <div class="text-xs text-slate-400 mt-1">no data</div></div>`;
+  }
+  const conf = w.confidence || "none";
+  const st = CONF_STYLE[conf] || CONF_STYLE.none;
+  const hasEstimate = w.ceiling_estimate != null;
+  const big = hasEstimate ? quotaFmt(w.ceiling_estimate, metric) : "≥ " + quotaFmt(w.lower_bound, metric);
+  const sub = hasEstimate
+    ? `lower bound ${quotaFmt(w.lower_bound, metric)}`
+    : `peak seen so far — true cap is higher`;
+  const meta = (w.n_wall_events != null)
+    ? `${w.n_near_peak} near-peak · ${w.n_wall_events} wall${w.n_wall_events === 1 ? "" : "s"}`
+    : (w.note || "");
+  return `<div class="rounded shadow p-4 border ${st.ring}">
+    <div class="text-xs uppercase text-slate-500">${title}</div>
+    <div class="num text-2xl font-bold mt-1 ${hasEstimate ? st.text : "text-slate-700"}">${big}</div>
+    <div class="text-xs ${st.text} mt-1">${subtitle ? subtitle + " · " : ""}${st.label}</div>
+    <div class="text-xs text-slate-400 mt-1">${sub}</div>
+    <div class="text-[11px] text-slate-400 mt-1">${meta}</div>
+  </div>`;
+}
+
+function quotaBlocksRows(blocks, metric) {
+  if (!blocks || !blocks.length) return `<tr><td class="text-slate-400 py-1" colspan="4">—</td></tr>`;
+  return blocks.map(b =>
+    `<tr class="border-t">
+       <td class="py-1 text-xs">${b.start ? b.start.slice(0,16).replace('T',' ') : '—'}</td>
+       <td class="text-right num font-semibold">${quotaFmt(b.total, metric)}</td>
+       <td class="text-right num">${fmtInt(b.n_turns)}</td>
+       <td class="text-right num">${(b.duration_hours ?? 0).toFixed(1)}</td>
+     </tr>`).join("");
+}
+
+async function loadQuotas() {
+  const metric = $("#q-metric").value;
+  const q = await api(`/api/quota?metric=${metric}`);
+
+  if (!q.data_range) {
+    $("#q-range").textContent = "no data";
+    $("#q-cards").innerHTML = "";
+    return;
+  }
+  const dr = q.data_range;
+  $("#q-range").textContent =
+    `${dr.first_ts.slice(0,10)} → ${dr.last_ts.slice(0,10)} · ${Math.round(dr.n_days)} days · ${fmtInt(dr.n_turns)} turns · all hosts (per-account)`;
+
+  $("#q-cards").innerHTML =
+    quotaCard("5-hour window", q.windows["5h"], metric) +
+    quotaCard("weekly window", q.windows["weekly"], metric) +
+    quotaCard("weekly — Opus", q.weekly_opus, metric, "Opus sub-cap") +
+    quotaCard("per session", q.windows["session"], metric);
+
+  $("#q-blocks-5h").innerHTML     = quotaBlocksRows(q.windows["5h"]?.top_blocks, metric);
+  $("#q-blocks-weekly").innerHTML = quotaBlocksRows(q.windows["weekly"]?.top_blocks, metric);
+
+  $("#q-notes").innerHTML = (q.notes || []).map(n => `<li>${n}</li>`).join("");
+
+  // Evolution chart: monthly peak 5h + peak weekly, with ceiling reference lines.
+  const ev = q.evolution || [];
+  const labels = ev.map(r => r.month);
+  const datasets = [
+    { label: "peak 5h", data: ev.map(r => r.peak_5h),
+      borderColor: "rgb(37,99,235)", backgroundColor: "rgba(37,99,235,0.12)",
+      fill: false, tension: 0.2 },
+    { label: "peak weekly", data: ev.map(r => r.peak_weekly),
+      borderColor: "rgb(139,92,246)", backgroundColor: "rgba(139,92,246,0.12)",
+      fill: false, tension: 0.2 },
+  ];
+  const est5h = q.windows["5h"]?.ceiling_estimate;
+  if (est5h != null) {
+    datasets.push({ label: "inferred 5h ceiling", data: labels.map(() => est5h),
+      borderColor: "rgba(37,99,235,0.5)", borderDash: [6, 4], pointRadius: 0, fill: false });
+  }
+  const estWk = q.windows["weekly"]?.ceiling_estimate;
+  if (estWk != null) {
+    datasets.push({ label: "inferred weekly ceiling", data: labels.map(() => estWk),
+      borderColor: "rgba(139,92,246,0.5)", borderDash: [6, 4], pointRadius: 0, fill: false });
+  }
+  destroyChart("quotaEvo");
+  fitChartWidth($("#q-evo-wrap"), labels.length);
+  charts.quotaEvo = new Chart($("#chart-quota-evo"), {
+    type: "line",
+    data: { labels, datasets },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: "index", intersect: false },
+      plugins: {
+        legend: { display: true, position: "bottom" },
+        tooltip: { callbacks: { label: (c) =>
+          `${c.dataset.label}: ${metric === "usd" ? fmtUsd(c.parsed.y) : fmtInt(Math.round(c.parsed.y))}` } },
+      },
+      scales: { y: { ticks: { callback: (v) => metric === "usd" ? "$" + v : fmtInt(v) } } },
     },
   });
 }

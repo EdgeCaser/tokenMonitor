@@ -300,6 +300,70 @@ def cache():
 
 
 @cli.command()
+@click.option("--metric", type=click.Choice(["usd", "tokens"]), default="usd",
+              help="usd = API-$ equivalent (best quota proxy); tokens = raw count.")
+def quota(metric):
+    """Infer 5-hour / weekly / session quota ceilings from usage."""
+    conn = A.connect_with_views()
+    q = A.quota_inference(conn, metric=metric)
+    if not q.get("data_range"):
+        console.print("[yellow]no data[/yellow]")
+        return
+
+    def fmt(v):
+        if v is None:
+            return "—"
+        return _fmt_usd(v) if metric == "usd" else _fmt_int(v)
+
+    dr = q["data_range"]
+    console.print(Panel.fit(
+        f"metric   [bold]{metric}[/bold] (API-$ equivalent proxy)\n"
+        f"range    {dr['first_ts'][:10]} → {dr['last_ts'][:10]}  "
+        f"({dr['n_days']:.0f} days, {_fmt_int(dr['n_turns'])} turns, all hosts)",
+        title="quota inference", border_style="cyan",
+    ))
+
+    conf_color = {"high": "green", "medium": "yellow", "low": "red", "none": "dim"}
+    t = Table(title="inferred window ceilings", header_style="bold")
+    t.add_column("window"); t.add_column("ceiling estimate", justify="right")
+    t.add_column("confidence"); t.add_column("lower bound (peak)", justify="right")
+    t.add_column("near-peak", justify="right"); t.add_column("walls", justify="right")
+
+    def add_window(label, w):
+        if not w:
+            return
+        conf = w.get("confidence", "none")
+        est = w.get("ceiling_estimate")
+        est_txt = fmt(est) if est is not None else "[dim]≥ lower bound[/dim]"
+        t.add_row(
+            label, est_txt,
+            f"[{conf_color.get(conf, 'dim')}]{conf}[/]",
+            fmt(w.get("lower_bound")),
+            _fmt_int(w.get("n_near_peak")) if w.get("n_near_peak") is not None else "—",
+            _fmt_int(w.get("n_wall_events")) if w.get("n_wall_events") is not None else "—",
+        )
+
+    add_window("5-hour", q["windows"].get("5h"))
+    add_window("weekly", q["windows"].get("weekly"))
+    add_window("weekly (Opus)", q.get("weekly_opus"))
+    add_window("session_id", q["windows"].get("session"))
+    console.print(t)
+
+    ev = q.get("evolution") or []
+    if len(ev) > 1:
+        et = Table(title="evolution (per-month peak window usage)", header_style="bold")
+        et.add_column("month"); et.add_column("turns", justify="right")
+        et.add_column("peak 5h", justify="right"); et.add_column("peak weekly", justify="right")
+        for row in ev:
+            et.add_row(row["month"], _fmt_int(row["n_turns"]),
+                       fmt(row["peak_5h"]), fmt(row["peak_weekly"]))
+        console.print(et)
+
+    for n in q.get("notes", []):
+        console.print(f"[dim]· {n}[/dim]")
+
+
+@cli.command()
 @click.option("--port", default=8765)
 @click.option("--host", default="127.0.0.1")
 def serve(port, host):
