@@ -441,6 +441,157 @@ def cache_efficiency(
     ).fetchall()
 
 
+def calendar_heatmap(
+    conn: duckdb.DuckDBPyConnection,
+    days_back: int = 365,
+    host: str | None = None,
+) -> list[tuple]:
+    """One row per day for the last N days. Empty days are not returned —
+    caller fills gaps with 0 to render the grid."""
+    where_clauses = ["ts >= CURRENT_TIMESTAMP - (INTERVAL 1 DAY * ?)"]
+    params: list = [days_back]
+    if host:
+        where_clauses.append("host = ?")
+        params.append(host)
+    where = "WHERE " + " AND ".join(where_clauses)
+    return conn.execute(
+        f"""
+        SELECT CAST(date_trunc('day', ts) AS DATE) AS day,
+               SUM(total_usd) AS usd,
+               COUNT(*) AS turns
+        FROM v_turn_cost
+        {where}
+        GROUP BY day
+        ORDER BY day
+        """,
+        params,
+    ).fetchall()
+
+
+def hour_dow_heatmap(
+    conn: duckdb.DuckDBPyConnection,
+    since: str | None = None,
+    host: str | None = None,
+) -> list[tuple]:
+    """7×24 grid: (dow 0=Sunday..6=Saturday, hour 0-23, turns, usd)."""
+    where, params = _build_filter(since, host)
+    return conn.execute(
+        f"""
+        SELECT CAST(EXTRACT(dow FROM ts) AS INT) AS dow,
+               CAST(EXTRACT(hour FROM ts) AS INT) AS hour,
+               COUNT(*) AS turns,
+               SUM(total_usd) AS usd
+        FROM v_turn_cost
+        {where}
+        GROUP BY dow, hour
+        ORDER BY dow, hour
+        """,
+        params,
+    ).fetchall()
+
+
+def cache_savings(
+    conn: duckdb.DuckDBPyConnection,
+    since: str | None = None,
+    host: str | None = None,
+) -> dict:
+    """Counterfactual cost if every cache_read token had been full-price input.
+
+    Anthropic's cache_read pricing is 0.1× the input rate by convention, so the
+    extra you would have paid is exactly 9× what cache_read actually cost.
+    """
+    where, params = _build_filter(since, host)
+    row = conn.execute(
+        f"""
+        SELECT COALESCE(SUM(cache_read_usd), 0) AS cache_read_usd,
+               COALESCE(SUM(total_usd), 0) AS actual_total,
+               COALESCE(SUM(cache_read), 0) AS cache_read_tokens
+        FROM v_turn_cost
+        {where}
+        """,
+        params,
+    ).fetchone()
+    cache_read_usd, actual_total, cache_read_tokens = row
+    counterfactual_extra = float(cache_read_usd) * 9.0
+    counterfactual_total = float(actual_total) + counterfactual_extra
+    savings_pct = (
+        100.0 * counterfactual_extra / counterfactual_total
+        if counterfactual_total > 0 else 0.0
+    )
+    return {
+        "cache_read_tokens": int(cache_read_tokens),
+        "actual_cache_read_usd": float(cache_read_usd),
+        "actual_total_usd": float(actual_total),
+        "counterfactual_extra_usd": counterfactual_extra,
+        "counterfactual_total_usd": counterfactual_total,
+        "savings_pct": savings_pct,
+    }
+
+
+def burn_rate(
+    conn: duckdb.DuckDBPyConnection,
+    window_minutes: int = 60,
+    host: str | None = None,
+) -> dict:
+    """Recent spend rate. Returns $ in the window AND extrapolated $/hour."""
+    where_clauses = ["ts >= CURRENT_TIMESTAMP - (INTERVAL 1 MINUTE * ?)"]
+    params: list = [window_minutes]
+    if host:
+        where_clauses.append("host = ?")
+        params.append(host)
+    where = "WHERE " + " AND ".join(where_clauses)
+    row = conn.execute(
+        f"""
+        SELECT COALESCE(SUM(total_usd), 0) AS usd,
+               COUNT(*) AS turns
+        FROM v_turn_cost
+        {where}
+        """,
+        params,
+    ).fetchone()
+    spend = float(row[0])
+    return {
+        "window_minutes": window_minutes,
+        "spend_in_window_usd": spend,
+        "turns_in_window": int(row[1]),
+        "rate_per_hour_usd": spend * (60.0 / window_minutes),
+    }
+
+
+def tool_cost_attribution(
+    conn: duckdb.DuckDBPyConnection,
+    since: str | None = None,
+    host: str | None = None,
+) -> list[tuple]:
+    """For each tool: how many turns called it, the avg cost of those turns,
+    and the total cost contributed."""
+    filter_clauses = []
+    params: list = []
+    cutoff = parse_since(since)
+    if cutoff:
+        filter_clauses.append("t.ts >= ?")
+        params.append(cutoff)
+    if host:
+        filter_clauses.append("t.host = ?")
+        params.append(host)
+    where = ("WHERE " + " AND ".join(filter_clauses)) if filter_clauses else ""
+    return conn.execute(
+        f"""
+        SELECT tc.tool_name,
+               COUNT(DISTINCT tc.turn_uuid) AS turns_using,
+               COUNT(*)                    AS total_calls,
+               AVG(t.total_usd)            AS avg_turn_usd,
+               SUM(t.total_usd)            AS total_turn_usd
+        FROM tool_calls tc
+        JOIN v_turn_cost t ON t.uuid = tc.turn_uuid
+        {where}
+        GROUP BY tc.tool_name
+        ORDER BY total_turn_usd DESC
+        """,
+        params,
+    ).fetchall()
+
+
 def timeseries(
     conn: duckdb.DuckDBPyConnection,
     bucket: str = "day",

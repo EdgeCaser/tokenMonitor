@@ -42,12 +42,13 @@
     <button class="tab px-4 py-2 rounded-t text-sm font-medium" data-tab="sessions">Sessions</button>
     <button class="tab px-4 py-2 rounded-t text-sm font-medium" data-tab="tools">Tools</button>
     <button class="tab px-4 py-2 rounded-t text-sm font-medium" data-tab="cache">Cache</button>
+    <button class="tab px-4 py-2 rounded-t text-sm font-medium" data-tab="patterns">Patterns</button>
     <button class="tab px-4 py-2 rounded-t text-sm font-medium" data-tab="spend">Spend</button>
   </nav>
 
   <!-- OVERVIEW -->
   <section data-pane="overview" class="space-y-6">
-    <div class="grid grid-cols-4 gap-4">
+    <div class="grid grid-cols-3 gap-4">
       <div class="bg-white rounded shadow p-4">
         <div class="text-xs uppercase text-slate-500">turns</div>
         <div id="t-turns" class="num text-3xl font-bold">—</div>
@@ -57,12 +58,40 @@
         <div id="t-sessions" class="num text-3xl font-bold">—</div>
       </div>
       <div class="bg-white rounded shadow p-4">
+        <div class="text-xs uppercase text-slate-500">total spend</div>
+        <div id="t-spend" class="num text-3xl font-bold text-emerald-700">—</div>
+      </div>
+      <div class="bg-emerald-50 rounded shadow p-4 border border-emerald-200">
+        <div class="text-xs uppercase text-emerald-700">cache saved</div>
+        <div id="t-cache-saved" class="num text-3xl font-bold text-emerald-700">—</div>
+        <div id="t-cache-saved-pct" class="text-xs text-emerald-700/70 mt-1">—</div>
+      </div>
+      <div class="bg-amber-50 rounded shadow p-4 border border-amber-200">
+        <div class="text-xs uppercase text-amber-700">burn rate (last 60m)</div>
+        <div id="t-burn" class="num text-3xl font-bold text-amber-700">—</div>
+        <div id="t-burn-sub" class="text-xs text-amber-700/70 mt-1">—</div>
+      </div>
+      <div class="bg-white rounded shadow p-4">
         <div class="text-xs uppercase text-slate-500">projects</div>
         <div id="t-projects" class="num text-3xl font-bold">—</div>
       </div>
-      <div class="bg-white rounded shadow p-4">
-        <div class="text-xs uppercase text-slate-500">total spend</div>
-        <div id="t-spend" class="num text-3xl font-bold text-emerald-700">—</div>
+    </div>
+
+    <div class="bg-white rounded shadow p-4">
+      <div class="flex items-center justify-between mb-3">
+        <h2 class="font-semibold">Daily spend calendar (last 365 days)</h2>
+        <div class="flex items-center gap-2 text-xs text-slate-500">
+          <span>less</span>
+          <span class="inline-block w-3 h-3 bg-slate-100 border border-slate-200"></span>
+          <span class="inline-block w-3 h-3 bg-emerald-200"></span>
+          <span class="inline-block w-3 h-3 bg-emerald-400"></span>
+          <span class="inline-block w-3 h-3 bg-emerald-600"></span>
+          <span class="inline-block w-3 h-3 bg-emerald-800"></span>
+          <span>more</span>
+        </div>
+      </div>
+      <div class="overflow-x-auto">
+        <svg id="calendar" width="760" height="124"></svg>
       </div>
     </div>
 
@@ -143,12 +172,45 @@
       <canvas id="chart-tools" height="80"></canvas>
     </div>
     <div class="bg-white rounded shadow p-4">
+      <h2 class="font-semibold mb-3">Tool cost attribution</h2>
+      <div class="text-xs text-slate-500 mb-2">
+        "total $" = sum of every turn that called this tool (a turn can be counted under multiple tools).
+        Use it to rank tools by total cost they're associated with.
+      </div>
       <table class="w-full text-sm">
         <thead><tr class="text-slate-500 text-left">
-          <th>tool</th><th class="text-right">calls</th>
-          <th class="text-right">turns using</th><th class="text-right">input chars</th>
+          <th>tool</th>
+          <th class="text-right">calls</th>
+          <th class="text-right">turns using</th>
+          <th class="text-right">avg $/turn</th>
+          <th class="text-right">total $</th>
         </tr></thead>
         <tbody id="t-tools"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- PATTERNS -->
+  <section data-pane="patterns" class="hidden space-y-4">
+    <div class="bg-white rounded shadow p-4">
+      <div class="flex items-center justify-between mb-3">
+        <h2 class="font-semibold">When you Claude — hour × day of week</h2>
+        <div class="text-xs text-slate-500">color = turns; darker = busier</div>
+      </div>
+      <div class="overflow-x-auto">
+        <svg id="heatmap" width="800" height="280"></svg>
+      </div>
+    </div>
+    <div class="bg-white rounded shadow p-4">
+      <h2 class="font-semibold mb-3">Patterns by host (within current filters)</h2>
+      <table class="w-full text-sm">
+        <thead><tr class="text-slate-500 text-left">
+          <th>host</th>
+          <th class="text-right">peak hour</th>
+          <th class="text-right">peak day</th>
+          <th class="text-right">most active when</th>
+        </tr></thead>
+        <tbody id="t-patterns-host"></tbody>
       </table>
     </div>
   </section>
@@ -269,7 +331,140 @@ async function load(tab) {
   if (tab === "sessions")   await loadSessions();
   if (tab === "tools")      await loadTools();
   if (tab === "cache")      await loadCache();
+  if (tab === "patterns")   await loadPatterns();
   if (tab === "spend")      await loadSpend();
+}
+
+// === SVG heatmap helpers ===
+const SVGNS = "http://www.w3.org/2000/svg";
+function svg(name, attrs = {}) {
+  const el = document.createElementNS(SVGNS, name);
+  for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, v);
+  return el;
+}
+// Log-ish bucket → 0..4 for choosing one of the contribution-style fill levels.
+function bucket5(v, max) {
+  if (!v || max <= 0) return 0;
+  const r = v / max;
+  if (r < 0.05) return 1;
+  if (r < 0.20) return 2;
+  if (r < 0.50) return 3;
+  return 4;
+}
+const CAL_PALETTE = ["#f1f5f9", "#a7f3d0", "#34d399", "#059669", "#064e3b"];
+const HEAT_PALETTE = ["#f1f5f9", "#bfdbfe", "#60a5fa", "#2563eb", "#1e3a8a"];
+
+function renderCalendar(rows) {
+  const el = $("#calendar");
+  el.innerHTML = "";
+  const byDay = new Map(rows.map(r => [r.day, r]));
+  const maxUsd = Math.max(...rows.map(r => r.usd), 0.001);
+  const cell = 12, gap = 2;
+  const today = new Date();
+  // Walk back 365 days, snap to start of week (Sunday)
+  const days = [];
+  for (let i = 364; i >= 0; i--) {
+    const d = new Date(today);
+    d.setDate(today.getDate() - i);
+    days.push(d);
+  }
+  // Pad to start of first week
+  const firstDow = days[0].getDay();
+  for (let i = 0; i < firstDow; i++) days.unshift(null);
+  // Render
+  let col = 0, row = 0;
+  // month labels along the top
+  let lastMonth = -1;
+  for (const d of days) {
+    if (d) {
+      const iso = d.toISOString().slice(0, 10);
+      const data = byDay.get(iso);
+      const usd = data?.usd || 0;
+      const level = bucket5(usd, maxUsd);
+      const rect = svg("rect", {
+        x: col * (cell + gap), y: row * (cell + gap) + 16,
+        width: cell, height: cell, rx: 2, ry: 2,
+        fill: CAL_PALETTE[level],
+        stroke: "rgba(0,0,0,0.06)",
+      });
+      const title = svg("title");
+      title.textContent = `${iso} — ${fmtUsd(usd)} (${fmtInt(data?.turns || 0)} turns)`;
+      rect.appendChild(title);
+      el.appendChild(rect);
+      // Month label when month flips (on top row only)
+      if (row === 0 && d.getMonth() !== lastMonth) {
+        const label = svg("text", {
+          x: col * (cell + gap),
+          y: 10,
+          "font-size": 10,
+          fill: "rgb(100,116,139)",
+        });
+        label.textContent = d.toLocaleString("en-US", { month: "short" });
+        el.appendChild(label);
+        lastMonth = d.getMonth();
+      }
+    }
+    row++;
+    if (row >= 7) { row = 0; col++; }
+  }
+  el.setAttribute("width", (col + 1) * (cell + gap));
+}
+
+function renderHeatmap(rows) {
+  const el = $("#heatmap");
+  el.innerHTML = "";
+  const grid = Array.from({length: 7}, () => Array(24).fill(0));
+  for (const r of rows) {
+    if (r.dow >= 0 && r.dow < 7 && r.hour >= 0 && r.hour < 24) {
+      grid[r.dow][r.hour] = r.turns;
+    }
+  }
+  const maxTurns = Math.max(1, ...grid.flat());
+  const cellW = 28, cellH = 28, leftPad = 44, topPad = 24;
+  const dowNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+  // hour column headers
+  for (let h = 0; h < 24; h++) {
+    if (h % 3 !== 0) continue;
+    const t = svg("text", {
+      x: leftPad + h * cellW + cellW / 2,
+      y: 18,
+      "font-size": 10,
+      fill: "rgb(100,116,139)",
+      "text-anchor": "middle",
+    });
+    t.textContent = `${h}:00`;
+    el.appendChild(t);
+  }
+  // day row labels + cells
+  for (let d = 0; d < 7; d++) {
+    const dayLabel = svg("text", {
+      x: leftPad - 8,
+      y: topPad + d * cellH + cellH / 2 + 4,
+      "font-size": 11,
+      fill: "rgb(71,85,105)",
+      "text-anchor": "end",
+    });
+    dayLabel.textContent = dowNames[d];
+    el.appendChild(dayLabel);
+    for (let h = 0; h < 24; h++) {
+      const v = grid[d][h];
+      const level = bucket5(v, maxTurns);
+      const rect = svg("rect", {
+        x: leftPad + h * cellW + 1,
+        y: topPad + d * cellH + 1,
+        width: cellW - 2, height: cellH - 2,
+        rx: 3, ry: 3,
+        fill: HEAT_PALETTE[level],
+        stroke: "rgba(0,0,0,0.04)",
+      });
+      const title = svg("title");
+      title.textContent = `${dowNames[d]} ${h}:00 — ${fmtInt(v)} turns`;
+      rect.appendChild(title);
+      el.appendChild(rect);
+    }
+  }
+  el.setAttribute("width", leftPad + 24 * cellW + 8);
+  el.setAttribute("height", topPad + 7 * cellH + 4);
 }
 
 async function loadOverview() {
@@ -278,6 +473,17 @@ async function loadOverview() {
   $("#t-sessions").textContent = fmtInt(s.sessions);
   $("#t-projects").textContent = fmtInt(s.projects);
   $("#t-spend").textContent    = fmtUsd(s.total_usd);
+
+  // Cache savings + burn rate tiles fire in parallel
+  api(`/api/cache_savings?since=${since()}${hostQ()}`).then(cs => {
+    $("#t-cache-saved").textContent     = fmtUsd(cs.counterfactual_extra_usd);
+    $("#t-cache-saved-pct").textContent = `${(cs.savings_pct || 0).toFixed(1)}% of what you'd have paid`;
+  }).catch(() => {});
+  api(`/api/burn_rate?window_minutes=60${hostQ() ? "&" + hostQ().slice(1) : ""}`).then(br => {
+    $("#t-burn").textContent     = fmtUsd(br.rate_per_hour_usd) + "/hr";
+    $("#t-burn-sub").textContent = `${fmtUsd(br.spend_in_window_usd)} across ${fmtInt(br.turns_in_window)} turns`;
+  }).catch(() => {});
+  api(`/api/calendar${hostQ() ? "?" + hostQ().slice(1) : ""}`).then(rows => renderCalendar(rows)).catch(() => {});
 
   const bucket = autoBucket();
   const rows = await api(`/api/spend?by=${bucket}&since=${since()}&limit=${autoBucketLimit()}${hostQ()}`);
@@ -363,23 +569,62 @@ async function showSession(sid) {
 }
 
 async function loadTools() {
-  const tools = await api(`/api/spend?by=tool${hostQ()}`);
+  const tools = await api(`/api/tool_costs?since=${since()}${hostQ()}`);
   destroyChart("tools");
   charts.tools = new Chart($("#chart-tools"), {
     type: "bar",
     data: {
       labels: tools.slice(0,20).map(t => t.tool_name),
-      datasets: [{ label: "calls",
-                   data: tools.slice(0,20).map(t => t.calls),
+      datasets: [{ label: "total $",
+                   data: tools.slice(0,20).map(t => t.total_turn_usd),
                    backgroundColor: "rgba(59,130,246,0.6)" }],
     },
     options: { plugins: { legend: { display: false } } },
   });
   $("#t-tools").innerHTML = tools.map(t =>
-    `<tr class="border-t"><td class="py-1">${t.tool_name}</td>
-       <td class="text-right num">${fmtInt(t.calls)}</td>
+    `<tr class="border-t hover:bg-slate-50">
+       <td class="py-1">${t.tool_name}</td>
+       <td class="text-right num">${fmtInt(t.total_calls)}</td>
        <td class="text-right num">${fmtInt(t.turns_using)}</td>
-       <td class="text-right num">${fmtInt(t.input_chars)}</td></tr>`).join("");
+       <td class="text-right num">${fmtUsd(t.avg_turn_usd)}</td>
+       <td class="text-right num font-semibold">${fmtUsd(t.total_turn_usd)}</td>
+     </tr>`).join("");
+}
+
+async function loadPatterns() {
+  const rows = await api(`/api/heatmap?since=${since()}${hostQ()}`);
+  renderHeatmap(rows);
+
+  // Per-host peak insights (only when no host filter active, else just current host)
+  const hosts = await api("/api/spend?by=host");
+  const dowNames = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+  const rowsByHost = [];
+  for (const h of hosts) {
+    const hostRows = await api(`/api/heatmap?host=${encodeURIComponent(h.host)}`);
+    let peak = {turns: -1, dow: 0, hour: 0};
+    const byDow = Array(7).fill(0);
+    const byHour = Array(24).fill(0);
+    for (const r of hostRows) {
+      if (r.turns > peak.turns) peak = {turns: r.turns, dow: r.dow, hour: r.hour};
+      byDow[r.dow]   += r.turns;
+      byHour[r.hour] += r.turns;
+    }
+    const peakDow = byDow.indexOf(Math.max(...byDow));
+    const peakHour = byHour.indexOf(Math.max(...byHour));
+    rowsByHost.push({
+      host: h.host,
+      peakHour: peakHour + ":00",
+      peakDay: dowNames[peakDow],
+      mostActive: `${dowNames[peak.dow]} ${peak.hour}:00 (${fmtInt(peak.turns)} turns)`,
+    });
+  }
+  $("#t-patterns-host").innerHTML = rowsByHost.map(r =>
+    `<tr class="border-t">
+       <td class="py-1">${r.host}</td>
+       <td class="text-right num">${r.peakHour}</td>
+       <td class="text-right num">${r.peakDay}</td>
+       <td class="text-right">${r.mostActive}</td>
+     </tr>`).join("");
 }
 
 async function loadCache() {

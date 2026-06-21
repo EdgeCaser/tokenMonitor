@@ -110,6 +110,42 @@ def api_cache(host: str | None = Query(None)):
                            "uncached_input", "cache_hit_pct"])
 
 
+@app.get("/api/calendar")
+def api_calendar(days_back: int = 365, host: str | None = Query(None)):
+    conn = A.connect_with_views(read_only=True)
+    rows = A.calendar_heatmap(conn, days_back=days_back, host=host)
+    return [{"day": str(d), "usd": float(u), "turns": int(t)} for d, u, t in rows]
+
+
+@app.get("/api/heatmap")
+def api_heatmap(since: str = "all", host: str | None = Query(None)):
+    conn = A.connect_with_views(read_only=True)
+    rows = A.hour_dow_heatmap(conn, since=since, host=host)
+    return [{"dow": int(d), "hour": int(h), "turns": int(t), "usd": float(u or 0)}
+            for d, h, t, u in rows]
+
+
+@app.get("/api/cache_savings")
+def api_cache_savings(since: str = "all", host: str | None = Query(None)):
+    conn = A.connect_with_views(read_only=True)
+    return A.cache_savings(conn, since=since, host=host)
+
+
+@app.get("/api/burn_rate")
+def api_burn_rate(window_minutes: int = 60, host: str | None = Query(None)):
+    conn = A.connect_with_views(read_only=True)
+    return A.burn_rate(conn, window_minutes=window_minutes, host=host)
+
+
+@app.get("/api/tool_costs")
+def api_tool_costs(since: str = "all", host: str | None = Query(None)):
+    conn = A.connect_with_views(read_only=True)
+    rows = A.tool_cost_attribution(conn, since=since, host=host)
+    return [{"tool_name": t, "turns_using": int(tu), "total_calls": int(c),
+             "avg_turn_usd": float(a), "total_turn_usd": float(s)}
+            for t, tu, c, a, s in rows]
+
+
 @app.get("/api/timeseries")
 def api_timeseries(bucket: str = "day", since: str = "all",
                    host: str | None = Query(None)):
