@@ -30,6 +30,19 @@ else:
 DEFAULT_SYNC_CONFIG = Path.home() / ".tokmon" / "sync.toml"
 
 
+def _no_window_kwargs() -> dict:
+    """subprocess kwargs that suppress a console window on Windows.
+
+    Without this, each ssh/rsync child launched from a scheduled task flashes
+    its own console window on the desktop. CREATE_NO_WINDOW runs the console
+    child with no window while still inheriting stdout/stderr, so manual
+    `tokmon push` runs in a terminal keep showing output. No-op on POSIX.
+    """
+    if os.name == "nt":
+        return {"creationflags": subprocess.CREATE_NO_WINDOW}
+    return {}
+
+
 @dataclass(frozen=True)
 class SyncTarget:
     pi_user: str
@@ -149,7 +162,7 @@ def _ensure_remote_dir(target: SyncTarget, verbose: bool = False) -> int:
     cmd = ["ssh", target.ssh_dest, f"mkdir -p {target.remote_root}"]
     if verbose:
         print("running:", " ".join(cmd), file=sys.stderr)
-    return subprocess.run(cmd).returncode
+    return subprocess.run(cmd, **_no_window_kwargs()).returncode
 
 
 def push(
@@ -174,4 +187,4 @@ def push(
     if verbose:
         cmd.insert(1, "-v")
         print("running:", " ".join(cmd), file=sys.stderr)
-    return subprocess.run(cmd).returncode
+    return subprocess.run(cmd, **_no_window_kwargs()).returncode
