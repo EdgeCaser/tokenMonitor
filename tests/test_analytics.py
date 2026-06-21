@@ -79,15 +79,22 @@ def test_fixed_blocks_partition():
 
 
 def test_ceiling_detected_when_peaks_cluster_and_resume_at_reset():
-    """Back-to-back 5h blocks, each pushing usage to ~9 in the window's second
-    half and resuming right at the next reset: the classic 'hit the wall, wait
-    for refresh' pattern → a real ceiling with wall events."""
+    """Back-to-back 5h blocks, each spreading 9 turns across the full window
+    so the LAST turn lands near the reset, then resuming right at that reset:
+    the classic 'hit the wall, wait for refresh' pattern → real ceiling with
+    wall events.
+
+    `_fixed_blocks` is turn-anchored (the first turn opens t=0 for that block),
+    so 'late in the window' means late relative to the first turn — meaning
+    the turns need to span most of the 5h window for the wall check to fire.
+    """
     w = 5 * 3600
     times, values = [], []
+    step = w / 16  # 9 turns spaced to cover (first .. first + w/2)
     for day in range(6):
         base = day * w  # blocks back-to-back so each resume == previous reset
         for k in range(9):
-            times.append(base + int(w * 0.5) + k * 120)  # late in the window
+            times.append(base + int(k * step))
             values.append(1.0)
     blocks = A._fixed_blocks(times, values, w)
     res = A._ceiling_from_blocks(blocks, w)
