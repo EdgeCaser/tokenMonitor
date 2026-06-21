@@ -1,5 +1,7 @@
 import pytest
-from tokmon.pricing import cost_for_turn, rate_for, load_rates
+from datetime import date
+
+from tokmon.pricing import cost_for_turn, load_rate_periods, load_rates, rate_for, rate_for_at
 
 
 def test_sonnet_rates_match_published():
@@ -46,3 +48,39 @@ def test_cost_breakdown_arithmetic():
     assert b.cache_write_1h_usd == 10.00
     assert b.cache_read_usd == 0.50
     assert b.total_usd == 46.75
+
+
+def test_effective_dated_rate_lookup_from_toml(tmp_path):
+    pricing = tmp_path / "pricing.toml"
+    pricing.write_text(
+        """
+[[prices]]
+model = "claude-test-model"
+effective_from = "2026-01-01"
+effective_to = "2026-06-01"
+input = 10.0
+output = 20.0
+
+[[prices]]
+model = "claude-test-model"
+effective_from = "2026-06-01"
+input = 1.0
+output = 2.0
+"""
+    )
+
+    periods = load_rate_periods(pricing)
+    assert rate_for_at("claude-test-model", date(2026, 5, 31), periods).input == 10.0
+    assert rate_for_at("claude-test-model", date(2026, 6, 1), periods).input == 1.0
+    assert load_rates(pricing)["claude-test-model"].input == 1.0
+
+    old_cost = cost_for_turn(
+        "claude-test-model", 1_000_000, 1_000_000, 0, 0, 0,
+        at=date(2026, 5, 31), periods=periods,
+    )
+    new_cost = cost_for_turn(
+        "claude-test-model", 1_000_000, 1_000_000, 0, 0, 0,
+        at=date(2026, 6, 1), periods=periods,
+    )
+    assert old_cost.total_usd == 30.0
+    assert new_cost.total_usd == 3.0

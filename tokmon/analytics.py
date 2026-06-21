@@ -8,46 +8,77 @@ from pathlib import Path
 import duckdb
 
 from .db import connect
-from .pricing import load_rates
+from .pricing import load_rate_periods, load_rates
 
 
 def _register_pricing(conn: duckdb.DuckDBPyConnection) -> None:
     """Load pricing into a temporary table joined by view DDL."""
-    rates = load_rates()
+    periods = load_rate_periods()
     conn.execute(
         """
         CREATE OR REPLACE TEMP TABLE _pricing (
-            model VARCHAR PRIMARY KEY,
+            model VARCHAR,
+            effective_from DATE,
+            effective_to DATE,
             input_per_mtok DOUBLE,
             output_per_mtok DOUBLE,
             cache_write_5m_per_mtok DOUBLE,
             cache_write_1h_per_mtok DOUBLE,
-            cache_read_per_mtok DOUBLE
+            cache_read_per_mtok DOUBLE,
+            source_url VARCHAR,
+            note VARCHAR
         );
         """
     )
-    for model, rate in rates.items():
-        conn.execute(
-            "INSERT INTO _pricing VALUES (?, ?, ?, ?, ?, ?)",
-            [
-                model, rate.input, rate.output,
-                rate.cache_write_5m, rate.cache_write_1h, rate.cache_read,
-            ],
-        )
-    sonnet = rates["claude-sonnet-4-6"]
+    for model_periods in periods.values():
+        for period in model_periods:
+            rate = period.rate
+            conn.execute(
+                "INSERT INTO _pricing VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                [
+                    period.model, period.effective_from, period.effective_to,
+                    rate.input, rate.output, rate.cache_write_5m,
+                    rate.cache_write_1h, rate.cache_read, period.source_url,
+                    period.note,
+                ],
+            )
+    sonnet = load_rates()["claude-sonnet-4-6"]
     conn.execute(
-        "INSERT INTO _pricing VALUES ('<fallback>', ?, ?, ?, ?, ?)",
+        """
+        INSERT INTO _pricing VALUES
+        ('<fallback>', DATE '1970-01-01', NULL, ?, ?, ?, ?, ?, ?, ?)
+        """,
         [
             sonnet.input, sonnet.output,
             sonnet.cache_write_5m, sonnet.cache_write_1h, sonnet.cache_read,
+            "https://claude.com/pricing", "unknown model fallback",
         ],
     )
     conn.execute(
-        "INSERT INTO _pricing VALUES ('<synthetic>', 0, 0, 0, 0, 0)"
+        """
+        INSERT INTO _pricing VALUES
+        ('<synthetic>', DATE '1970-01-01', NULL, 0, 0, 0, 0, 0, '', '')
+        """
     )
 
 
 VIEW_SQL = """
+-- Claude transcripts can repeat one API request under several message UUIDs.
+-- Billing/reporting should count the fullest observed row for each request_id.
+CREATE OR REPLACE TEMP VIEW v_billable_turns AS
+SELECT *
+FROM turns
+QUALIFY ROW_NUMBER() OVER (
+    PARTITION BY COALESCE(NULLIF(request_id, ''), uuid)
+    ORDER BY (input_tokens + output_tokens + cache_write_5m + cache_write_1h + cache_read) DESC,
+             ts, uuid
+) = 1;
+
+CREATE OR REPLACE TEMP VIEW v_billable_tool_calls AS
+SELECT DISTINCT tc.turn_uuid, tc.idx, tc.tool_name, tc.input_chars, tc.input_preview
+FROM tool_calls tc
+JOIN v_billable_turns t ON t.uuid = tc.turn_uuid;
+
 CREATE OR REPLACE TEMP VIEW v_turn_cost AS
 SELECT
     t.uuid,
@@ -75,9 +106,16 @@ SELECT
         t.cache_write_5m * COALESCE(p.cache_write_5m_per_mtok, f.cache_write_5m_per_mtok) +
         t.cache_write_1h * COALESCE(p.cache_write_1h_per_mtok, f.cache_write_1h_per_mtok) +
         t.cache_read     * COALESCE(p.cache_read_per_mtok,     f.cache_read_per_mtok)
-    ) / 1e6 AS total_usd
-FROM turns t
-LEFT JOIN _pricing p ON p.model = t.model
+    ) / 1e6 AS total_usd,
+    COALESCE(p.effective_from, f.effective_from) AS price_effective_from,
+    COALESCE(p.effective_to, f.effective_to) AS price_effective_to,
+    COALESCE(p.source_url, f.source_url) AS price_source_url,
+    COALESCE(p.note, f.note) AS price_note
+FROM v_billable_turns t
+LEFT JOIN _pricing p
+  ON p.model = t.model
+ AND CAST(t.ts AS DATE) >= p.effective_from
+ AND (p.effective_to IS NULL OR CAST(t.ts AS DATE) < p.effective_to)
 CROSS JOIN (SELECT * FROM _pricing WHERE model = '<fallback>') f;
 
 CREATE OR REPLACE TEMP VIEW v_session_summary AS
@@ -143,7 +181,7 @@ SELECT
     COUNT(DISTINCT tc.turn_uuid) AS turns_using,
     SUM(tc.input_chars)     AS total_input_chars,
     AVG(tc.input_chars)     AS avg_input_chars
-FROM tool_calls tc
+FROM v_billable_tool_calls tc
 GROUP BY tc.tool_name
 ORDER BY calls DESC;
 
@@ -304,14 +342,14 @@ def spend_by(
             GROUP BY session_id ORDER BY usd DESC LIMIT {limit}
         """
     elif dimension == "tool":
-        # tool_calls table joins via turn_uuid → can filter on host through turns
+        # Tool calls join via turn_uuid, so host filters go through billable turns.
         if host:
             q = """
                 SELECT tc.tool_name, COUNT(*) AS calls,
                        COUNT(DISTINCT tc.turn_uuid) AS turns_using,
                        SUM(tc.input_chars) AS input_chars
-                FROM tool_calls tc
-                JOIN turns t ON t.uuid = tc.turn_uuid
+                FROM v_billable_tool_calls tc
+                JOIN v_billable_turns t ON t.uuid = tc.turn_uuid
                 WHERE t.host = ?
                 GROUP BY tc.tool_name ORDER BY calls DESC LIMIT 50
             """
@@ -321,7 +359,7 @@ def spend_by(
                 SELECT tool_name, COUNT(*) AS calls,
                        COUNT(DISTINCT turn_uuid) AS turns_using,
                        SUM(input_chars) AS input_chars
-                FROM tool_calls
+                FROM v_billable_tool_calls
                 GROUP BY tool_name ORDER BY calls DESC LIMIT 50
             """
             params = []
@@ -413,7 +451,7 @@ def session_trace(conn: duckdb.DuckDBPyConnection, session_id: str) -> list[tupl
         """
         SELECT ts, model, input_tokens, output_tokens,
                cache_write_5m+cache_write_1h AS cache_write, cache_read,
-               total_usd, (SELECT COUNT(*) FROM tool_calls tc WHERE tc.turn_uuid = t.uuid) AS tools
+               total_usd, (SELECT COUNT(*) FROM v_billable_tool_calls tc WHERE tc.turn_uuid = t.uuid) AS tools
         FROM v_turn_cost t
         WHERE session_id = ?
         ORDER BY ts
@@ -596,7 +634,7 @@ def tool_cost_attribution(
                COUNT(*)                    AS total_calls,
                AVG(t.total_usd)            AS avg_turn_usd,
                SUM(t.total_usd)            AS total_turn_usd
-        FROM tool_calls tc
+        FROM v_billable_tool_calls tc
         JOIN v_turn_cost t ON t.uuid = tc.turn_uuid
         {where}
         GROUP BY tc.tool_name
@@ -779,7 +817,7 @@ def turn_explorer(
         where.append("t.total_usd >= ?")
         params.append(min_usd)
     if tool:
-        where.append("EXISTS (SELECT 1 FROM tool_calls tc WHERE tc.turn_uuid = t.uuid AND tc.tool_name = ?)")
+        where.append("EXISTS (SELECT 1 FROM v_billable_tool_calls tc WHERE tc.turn_uuid = t.uuid AND tc.tool_name = ?)")
         params.append(tool)
     where_clause = ("WHERE " + " AND ".join(where)) if where else ""
     return conn.execute(
@@ -788,8 +826,8 @@ def turn_explorer(
                t.model, t.input_tokens, t.output_tokens,
                t.cache_write_5m + t.cache_write_1h AS cache_write,
                t.cache_read, t.total_usd,
-               (SELECT COUNT(*) FROM tool_calls tc WHERE tc.turn_uuid = t.uuid) AS n_tools,
-               (SELECT string_agg(tc.tool_name, ',') FROM tool_calls tc WHERE tc.turn_uuid = t.uuid) AS tools
+               (SELECT COUNT(*) FROM v_billable_tool_calls tc WHERE tc.turn_uuid = t.uuid) AS n_tools,
+               (SELECT string_agg(tc.tool_name, ',') FROM v_billable_tool_calls tc WHERE tc.turn_uuid = t.uuid) AS tools
         FROM v_turn_cost t
         {where_clause}
         ORDER BY t.total_usd DESC
@@ -809,8 +847,9 @@ def turn_detail(
         SELECT t.uuid, t.ts, t.host, t.project_label, t.project_path, t.session_id,
                t.git_branch, t.model, t.input_tokens, t.output_tokens,
                t.cache_write_5m, t.cache_write_1h, t.cache_read,
-               t.total_usd, t.stop_reason, t.has_thinking, t.thinking_chars,
-               t.text_chars, turns.raw_usage
+               t.total_usd, t.price_effective_from, t.price_effective_to,
+               t.price_source_url, t.price_note, t.stop_reason,
+               t.has_thinking, t.thinking_chars, t.text_chars, turns.raw_usage
         FROM v_turn_cost t
         JOIN turns USING (uuid)
         WHERE t.uuid = ?
@@ -822,14 +861,18 @@ def turn_detail(
     keys = ["uuid", "ts", "host", "project_label", "project_path", "session_id",
             "git_branch", "model", "input_tokens", "output_tokens",
             "cache_write_5m", "cache_write_1h", "cache_read",
-            "total_usd", "stop_reason", "has_thinking", "thinking_chars",
-            "text_chars", "raw_usage"]
+            "total_usd", "price_effective_from", "price_effective_to",
+            "price_source_url", "price_note", "stop_reason", "has_thinking",
+            "thinking_chars", "text_chars", "raw_usage"]
     out = dict(zip(keys, row))
     if out["ts"]:
         out["ts"] = out["ts"].isoformat()
+    for key in ("price_effective_from", "price_effective_to"):
+        if out.get(key):
+            out[key] = str(out[key])
     out["total_usd"] = float(out["total_usd"])
     tools = conn.execute(
-        "SELECT idx, tool_name, input_chars, input_preview FROM tool_calls WHERE turn_uuid = ? ORDER BY idx",
+        "SELECT idx, tool_name, input_chars, input_preview FROM v_billable_tool_calls WHERE turn_uuid = ? ORDER BY idx",
         [turn_uuid],
     ).fetchall()
     out["tools"] = [

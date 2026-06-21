@@ -6,6 +6,7 @@ import pytest
 from tokmon import analytics as A
 from tokmon import config as cfg_mod
 from tokmon import db, ingest
+from tokmon import pricing as pricing_mod
 
 
 FIXTURE = Path(__file__).parent / "fixtures" / "synthetic.jsonl"
@@ -35,6 +36,96 @@ def test_top_turns_orders_by_cost(loaded):
 def test_tool_rollup(loaded):
     rows = A.spend_by(loaded, "tool")
     assert any(r[0] == "Bash" for r in rows)
+
+
+def test_billable_views_dedupe_duplicate_request_ids(loaded):
+    before = A.summary(loaded)
+
+    loaded.execute(
+        """
+        INSERT INTO turns
+        SELECT 'a1_duplicate', parent_uuid, request_id, session_id,
+               project_path, project_label, git_branch, model,
+               ts + INTERVAL 1 SECOND, is_sidechain, input_tokens,
+               output_tokens, cache_write_5m, cache_write_1h, cache_read,
+               service_tier, stop_reason, has_thinking, thinking_chars,
+               text_chars, web_search_requests, web_fetch_requests, raw_usage,
+               source_file, source_offset + 1, host
+        FROM turns WHERE uuid = 'a1'
+        """
+    )
+    loaded.execute(
+        """
+        INSERT INTO turns
+        SELECT 'a2_duplicate', parent_uuid, request_id, session_id,
+               project_path, project_label, git_branch, model,
+               ts + INTERVAL 1 SECOND, is_sidechain, input_tokens,
+               output_tokens, cache_write_5m, cache_write_1h, cache_read,
+               service_tier, stop_reason, has_thinking, thinking_chars,
+               text_chars, web_search_requests, web_fetch_requests, raw_usage,
+               source_file, source_offset + 1, host
+        FROM turns WHERE uuid = 'a2'
+        """
+    )
+    loaded.execute(
+        """
+        INSERT INTO tool_calls
+        SELECT 'a2_duplicate', idx, tool_name, input_chars, input_preview
+        FROM tool_calls WHERE turn_uuid = 'a2'
+        """
+    )
+
+    assert loaded.execute("SELECT COUNT(*) FROM turns").fetchone()[0] == 5
+    after = A.summary(loaded)
+    assert after["turns"] == before["turns"]
+    assert after["total_usd"] == pytest.approx(before["total_usd"])
+
+    bash = [r for r in A.spend_by(loaded, "tool") if r[0] == "Bash"][0]
+    assert bash[1] == 1  # calls
+    assert bash[2] == 1  # turns_using
+
+
+def test_views_join_pricing_by_turn_date(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    projects_dir = home / ".claude" / "projects"
+    proj_dir = projects_dir / "-tmp-test-proj"
+    proj_dir.mkdir(parents=True)
+    fixture = proj_dir / "test-session-001.jsonl"
+    shutil.copy(FIXTURE, fixture)
+
+    pricing = tmp_path / "pricing.toml"
+    pricing.write_text(
+        """
+[[prices]]
+model = "claude-sonnet-4-6"
+effective_from = "2026-01-01"
+effective_to = "2026-06-21"
+input = 30.0
+output = 150.0
+
+[[prices]]
+model = "claude-sonnet-4-6"
+effective_from = "2026-06-21"
+input = 3.0
+output = 15.0
+"""
+    )
+    monkeypatch.setattr(db, "DEFAULT_DB_PATH", tmp_path / "tokmon.duckdb")
+    monkeypatch.setattr(pricing_mod, "DEFAULT_PRICING_PATH", pricing)
+    ingest.incremental(roots=[(projects_dir, "local")])
+
+    conn = A.connect_with_views()
+    row = conn.execute(
+        """
+        SELECT input_usd, output_usd, price_effective_from, price_effective_to
+        FROM v_turn_cost
+        WHERE uuid = 'a1'
+        """
+    ).fetchone()
+    assert row[0] == pytest.approx(100 * 30 / 1_000_000)
+    assert row[1] == pytest.approx(50 * 150 / 1_000_000)
+    assert str(row[2]) == "2026-01-01"
+    assert str(row[3]) == "2026-06-21"
 
 
 def test_cache_efficiency_includes_models(loaded):

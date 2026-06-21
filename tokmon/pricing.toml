@@ -1,5 +1,6 @@
 # Override model rates here. Values are USD per million tokens.
 # If a model is omitted, defaults from tokmon/pricing.py are used.
+# [models] entries are treated as the current rate for all dates.
 # Cache fields are optional; default to input × {1.25, 2.00, 0.10}.
 #
 # Example:
@@ -9,3 +10,19 @@
 # cache_write_5m = 6.25
 # cache_write_1h = 10.00
 # cache_read = 0.50
+#
+# For historical pricing, use one or more half-open date ranges. A turn on
+# effective_from is included; a turn on effective_to is excluded. If any
+# [[prices]] entries are present for a model, they replace that model's
+# open-ended [models]/default rate history.
+#
+# [[prices]]
+# model = "claude-opus-4-8"
+# effective_from = "2026-05-28"
+# input = 5.00
+# output = 25.00
+# cache_write_5m = 6.25
+# cache_write_1h = 10.00
+# cache_read = 0.50
+# source_url = "https://claude.com/pricing"
+# note = "Opus 4.8 launch/current rate"

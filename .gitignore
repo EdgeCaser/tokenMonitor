@@ -8,6 +8,7 @@ venv/
 tokmon.duckdb
 tokmon.duckdb.wal
 .pytest_cache/
+.pytest_tmp/
 .coverage
 htmlcov/
 dist/
