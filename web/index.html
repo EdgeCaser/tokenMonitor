@@ -43,6 +43,8 @@
     <button class="tab px-4 py-2 rounded-t text-sm font-medium" data-tab="tools">Tools</button>
     <button class="tab px-4 py-2 rounded-t text-sm font-medium" data-tab="cache">Cache</button>
     <button class="tab px-4 py-2 rounded-t text-sm font-medium" data-tab="patterns">Patterns</button>
+    <button class="tab px-4 py-2 rounded-t text-sm font-medium" data-tab="branches">Branches</button>
+    <button class="tab px-4 py-2 rounded-t text-sm font-medium" data-tab="turns">Turns</button>
     <button class="tab px-4 py-2 rounded-t text-sm font-medium" data-tab="spend">Spend</button>
   </nav>
 
@@ -74,6 +76,33 @@
       <div class="bg-white rounded shadow p-4">
         <div class="text-xs uppercase text-slate-500">projects</div>
         <div id="t-projects" class="num text-3xl font-bold">—</div>
+      </div>
+    </div>
+
+    <div class="grid grid-cols-2 gap-4">
+      <div class="bg-white rounded shadow p-4">
+        <h2 class="font-semibold mb-3">This month's spend forecast</h2>
+        <div class="flex items-end gap-4">
+          <div>
+            <div class="text-xs uppercase text-slate-500">month to date</div>
+            <div id="t-mtd" class="num text-2xl font-bold">—</div>
+          </div>
+          <div class="text-3xl text-slate-300">→</div>
+          <div>
+            <div class="text-xs uppercase text-slate-500">projected end of month</div>
+            <div id="t-eom" class="num text-2xl font-bold text-indigo-700">—</div>
+          </div>
+        </div>
+        <div id="t-forecast-sub" class="text-xs text-slate-500 mt-3">—</div>
+        <div class="mt-3 h-2 bg-slate-100 rounded overflow-hidden">
+          <div id="t-forecast-bar" class="h-full bg-indigo-500" style="width: 0%"></div>
+        </div>
+      </div>
+      <div class="bg-white rounded shadow p-4">
+        <h2 class="font-semibold mb-3">Achievements</h2>
+        <div id="t-achievement-streak" class="text-sm mb-3">—</div>
+        <div id="t-achievement-hof" class="text-xs text-slate-600 mb-3">—</div>
+        <div id="t-achievement-badges" class="flex flex-wrap gap-2"></div>
       </div>
     </div>
 
@@ -187,6 +216,57 @@
         </tr></thead>
         <tbody id="t-tools"></tbody>
       </table>
+    </div>
+  </section>
+
+  <!-- BRANCHES -->
+  <section data-pane="branches" class="hidden bg-white rounded shadow p-4">
+    <h2 class="font-semibold mb-3">Spend by git branch</h2>
+    <div class="text-xs text-slate-500 mb-2">
+      git_branch is captured per turn (when Claude Code records it). Use this to
+      tally what each feature branch actually cost.
+    </div>
+    <table class="w-full text-sm">
+      <thead><tr class="text-slate-500 text-left">
+        <th>project</th><th>branch</th>
+        <th class="text-right">sessions</th>
+        <th class="text-right">turns</th>
+        <th class="text-right">$ spend</th>
+      </tr></thead>
+      <tbody id="t-branches"></tbody>
+    </table>
+  </section>
+
+  <!-- TURNS EXPLORER -->
+  <section data-pane="turns" class="hidden space-y-4">
+    <div class="bg-white rounded shadow p-4">
+      <h2 class="font-semibold mb-3">Turn explorer</h2>
+      <div class="grid grid-cols-5 gap-3 mb-3 text-sm">
+        <input id="t-flt-model"   placeholder="model (exact)"        class="border rounded px-2 py-1" />
+        <input id="t-flt-project" placeholder="project label or path" class="border rounded px-2 py-1" />
+        <input id="t-flt-tool"    placeholder="tool (e.g. Bash)"       class="border rounded px-2 py-1" />
+        <input id="t-flt-min-usd" type="number" step="0.01" placeholder="min $" class="border rounded px-2 py-1" />
+        <button id="t-flt-apply" class="bg-slate-800 text-white rounded px-3 py-1 text-sm">apply</button>
+      </div>
+      <div class="overflow-x-auto">
+        <table class="w-full text-sm">
+          <thead><tr class="text-slate-500 text-left">
+            <th>ts</th><th>host</th><th>project</th><th>model</th>
+            <th class="text-right">in</th><th class="text-right">out</th>
+            <th class="text-right">cw</th><th class="text-right">cr</th>
+            <th class="text-right">$</th>
+            <th>tools</th>
+          </tr></thead>
+          <tbody id="t-turns"></tbody>
+        </table>
+      </div>
+    </div>
+    <div id="t-turn-detail" class="hidden bg-white rounded shadow p-4">
+      <div class="flex items-center justify-between mb-2">
+        <h2 class="font-semibold">Turn detail</h2>
+        <button id="t-turn-close" class="text-xs text-slate-500 hover:text-slate-800">close</button>
+      </div>
+      <pre id="t-turn-detail-body" class="text-xs bg-slate-50 p-3 rounded overflow-x-auto"></pre>
     </div>
   </section>
 
@@ -332,8 +412,20 @@ async function load(tab) {
   if (tab === "tools")      await loadTools();
   if (tab === "cache")      await loadCache();
   if (tab === "patterns")   await loadPatterns();
+  if (tab === "branches")   await loadBranches();
+  if (tab === "turns")      await loadTurns();
   if (tab === "spend")      await loadSpend();
 }
+
+// Wire turn-explorer filter button + close
+document.addEventListener("DOMContentLoaded", () => {
+  const apply = $("#t-flt-apply");
+  if (apply) apply.addEventListener("click", () => loadTurns());
+  const close = $("#t-turn-close");
+  if (close) close.addEventListener("click", () =>
+    $("#t-turn-detail").classList.add("hidden")
+  );
+});
 
 // === SVG heatmap helpers ===
 const SVGNS = "http://www.w3.org/2000/svg";
@@ -485,6 +577,44 @@ async function loadOverview() {
   }).catch(() => {});
   api(`/api/calendar${hostQ() ? "?" + hostQ().slice(1) : ""}`).then(rows => renderCalendar(rows)).catch(() => {});
 
+  // Forecast
+  api(`/api/forecast${hostQ() ? "?" + hostQ().slice(1) : ""}`).then(f => {
+    $("#t-mtd").textContent = fmtUsd(f.month_to_date_usd);
+    $("#t-eom").textContent = fmtUsd(f.projected_eom_usd);
+    const pct = f.days_elapsed && f.days_in_month
+      ? Math.min(100, 100 * f.days_elapsed / f.days_in_month) : 0;
+    $("#t-forecast-bar").style.width = pct.toFixed(1) + "%";
+    let sub = `Day ${Math.floor(f.days_elapsed)} of ${f.days_in_month}. Burn rate: ${fmtUsd(f.daily_rate_usd)}/day.`;
+    if (f.last_month_total_usd > 0) {
+      const delta = f.vs_last_month_pct;
+      const arrow = delta >= 0 ? "↑" : "↓";
+      const color = delta >= 0 ? "text-rose-600" : "text-emerald-600";
+      sub += ` <span class="${color}">${arrow} ${Math.abs(delta).toFixed(0)}%</span> vs same point last month (last month total: ${fmtUsd(f.last_month_total_usd)}).`;
+    }
+    $("#t-forecast-sub").innerHTML = sub;
+  }).catch(() => {});
+
+  // Achievements
+  api(`/api/achievements${hostQ() ? "?" + hostQ().slice(1) : ""}`).then(a => {
+    if (a.current_streak) {
+      const cs = a.current_streak, ls = a.longest_streak;
+      let txt = `🔥 <strong>${cs.length}-day streak</strong> ending ${cs.end}`;
+      if (ls && ls.length > cs.length) {
+        txt += ` (longest ever: <strong>${ls.length} days</strong>, ${ls.start_day || ls.start} → ${ls.end_day || ls.end})`;
+      } else {
+        txt += ` — that's also your <strong>all-time longest</strong>!`;
+      }
+      $("#t-achievement-streak").innerHTML = txt;
+    }
+    if (a.hall_of_fame_turn) {
+      const h = a.hall_of_fame_turn;
+      $("#t-achievement-hof").innerHTML =
+        `🏆 <strong>Hall-of-fame turn:</strong> ${fmtUsd(h.usd)} on ${h.model} in ${h.project} (${h.host}) at ${h.ts ? h.ts.slice(0,16).replace('T',' ') : '—'}.`;
+    }
+    $("#t-achievement-badges").innerHTML = (a.milestones || [])
+      .map(m => `<span class="inline-block bg-amber-100 text-amber-900 px-3 py-1 rounded-full text-sm border border-amber-200">${m.icon} ${m.label}</span>`).join("");
+  }).catch(() => {});
+
   const bucket = autoBucket();
   const rows = await api(`/api/spend?by=${bucket}&since=${since()}&limit=${autoBucketLimit()}${hostQ()}`);
   rows.reverse();
@@ -538,18 +668,74 @@ async function loadProjects() {
 }
 
 async function loadSessions() {
-  const ss = await api(`/api/spend?by=session&since=${since()}&limit=200${hostQ()}`);
-  $("#t-sessions-all").innerHTML = ss.map(s =>
-    `<tr class="border-t hover:bg-slate-50 cursor-pointer" data-session="${s.session_id}">
-       <td class="py-1 font-mono text-xs">${s.session_id.slice(0,8)}…${s.session_id.slice(-4)}</td>
+  const [ss, outliers] = await Promise.all([
+    api(`/api/spend?by=session&since=${since()}&limit=200${hostQ()}`),
+    api(`/api/outliers${hostQ() ? "?" + hostQ().slice(1) : ""}`).catch(() => []),
+  ]);
+  const outlierMap = new Map(outliers.map(o => [o.session_id, o]));
+  $("#t-sessions-all").innerHTML = ss.map(s => {
+    const o = outlierMap.get(s.session_id);
+    const badge = o
+      ? `<span class="ml-2 inline-block bg-amber-100 text-amber-800 text-xs px-2 py-0.5 rounded" title="${o.multiplier.toFixed(1)}x project mean (z=${o.z_score.toFixed(1)})">outlier ${o.multiplier.toFixed(1)}×</span>`
+      : "";
+    return `<tr class="border-t hover:bg-slate-50 cursor-pointer" data-session="${s.session_id}">
+       <td class="py-1 font-mono text-xs">${s.session_id.slice(0,8)}…${s.session_id.slice(-4)}${badge}</td>
        <td>${s.project || ''}</td>
        <td class="text-right num">${fmtInt(s.turns)}</td>
        <td class="text-right num">${fmtInt(s.tokens)}</td>
        <td class="text-right num">${fmtUsd(s.usd)}</td>
-     </tr>`).join("");
+     </tr>`;
+  }).join("");
   document.querySelectorAll("[data-session]").forEach(tr => {
     tr.addEventListener("click", () => showSession(tr.dataset.session));
   });
+}
+
+async function loadBranches() {
+  const rows = await api(`/api/branches?since=${since()}${hostQ()}`);
+  $("#t-branches").innerHTML = rows.map(r =>
+    `<tr class="border-t hover:bg-slate-50">
+       <td class="py-1">${r.project}</td>
+       <td class="font-mono text-xs">${r.branch}</td>
+       <td class="text-right num">${fmtInt(r.sessions)}</td>
+       <td class="text-right num">${fmtInt(r.turns)}</td>
+       <td class="text-right num font-semibold">${fmtUsd(r.usd)}</td>
+     </tr>`).join("");
+}
+
+async function loadTurns() {
+  const params = new URLSearchParams();
+  const m = $("#t-flt-model").value;       if (m) params.set("model", m);
+  const p = $("#t-flt-project").value;     if (p) params.set("project", p);
+  const t = $("#t-flt-tool").value;        if (t) params.set("tool", t);
+  const u = $("#t-flt-min-usd").value;     if (u) params.set("min_usd", u);
+  if (host()) params.set("host", host());
+  params.set("since", since());
+  params.set("limit", "200");
+  const rows = await api(`/api/turns?${params.toString()}`);
+  $("#t-turns").innerHTML = rows.map(r =>
+    `<tr class="border-t hover:bg-slate-50 cursor-pointer" data-turn="${r.uuid}">
+       <td class="py-1 text-xs">${r.ts ? r.ts.slice(0,16).replace('T',' ') : '—'}</td>
+       <td class="text-xs">${r.host || '—'}</td>
+       <td>${r.project || ''}</td>
+       <td class="text-xs">${r.model}</td>
+       <td class="text-right num">${fmtInt(r.input_tokens)}</td>
+       <td class="text-right num">${fmtInt(r.output_tokens)}</td>
+       <td class="text-right num">${fmtInt(r.cache_write)}</td>
+       <td class="text-right num">${fmtInt(r.cache_read)}</td>
+       <td class="text-right num font-semibold">${fmtUsd(r.total_usd)}</td>
+       <td class="text-xs">${r.tools || ''}</td>
+     </tr>`).join("");
+  document.querySelectorAll("[data-turn]").forEach(tr =>
+    tr.addEventListener("click", () => showTurnDetail(tr.dataset.turn))
+  );
+}
+
+async function showTurnDetail(uuid) {
+  const detail = await api(`/api/turns/${uuid}`);
+  $("#t-turn-detail").classList.remove("hidden");
+  $("#t-turn-detail-body").textContent = JSON.stringify(detail, null, 2);
+  $("#t-turn-detail").scrollIntoView({behavior: "smooth"});
 }
 
 async function showSession(sid) {

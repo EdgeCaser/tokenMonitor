@@ -146,6 +146,68 @@ def api_tool_costs(since: str = "all", host: str | None = Query(None)):
             for t, tu, c, a, s in rows]
 
 
+@app.get("/api/outliers")
+def api_outliers(z_threshold: float = 2.0, host: str | None = Query(None)):
+    conn = A.connect_with_views(read_only=True)
+    return A.outlier_sessions(conn, z_threshold=z_threshold, host=host)
+
+
+@app.get("/api/forecast")
+def api_forecast(host: str | None = Query(None)):
+    conn = A.connect_with_views(read_only=True)
+    return A.monthly_forecast(conn, host=host)
+
+
+@app.get("/api/branches")
+def api_branches(since: str = "all", host: str | None = Query(None), limit: int = 50):
+    conn = A.connect_with_views(read_only=True)
+    rows = A.branch_spend(conn, since=since, host=host, limit=limit)
+    return [{"project": p, "branch": b, "turns": int(t),
+             "sessions": int(s), "usd": float(u)}
+            for p, b, t, s, u in rows]
+
+
+@app.get("/api/turns")
+def api_turns(
+    model: str | None = Query(None),
+    project: str | None = Query(None),
+    host: str | None = Query(None),
+    tool: str | None = Query(None),
+    min_usd: float | None = Query(None),
+    since: str = Query("all"),
+    limit: int = Query(100),
+):
+    conn = A.connect_with_views(read_only=True)
+    rows = A.turn_explorer(conn, model=model, project=project, host=host,
+                           tool=tool, min_usd=min_usd, since=since, limit=limit)
+    keys = ["uuid", "ts", "host", "project", "session_id", "model",
+            "input_tokens", "output_tokens", "cache_write", "cache_read",
+            "total_usd", "n_tools", "tools"]
+    out = []
+    for r in rows:
+        d = dict(zip(keys, r))
+        d["ts"] = d["ts"].isoformat() if d["ts"] else None
+        d["total_usd"] = float(d["total_usd"])
+        d["n_tools"] = int(d["n_tools"])
+        out.append(d)
+    return out
+
+
+@app.get("/api/turns/{turn_uuid}")
+def api_turn_detail(turn_uuid: str):
+    conn = A.connect_with_views(read_only=True)
+    detail = A.turn_detail(conn, turn_uuid)
+    if not detail:
+        raise HTTPException(404, "turn not found")
+    return detail
+
+
+@app.get("/api/achievements")
+def api_achievements(host: str | None = Query(None)):
+    conn = A.connect_with_views(read_only=True)
+    return A.achievements(conn, host=host)
+
+
 @app.get("/api/timeseries")
 def api_timeseries(bucket: str = "day", since: str = "all",
                    host: str | None = Query(None)):
