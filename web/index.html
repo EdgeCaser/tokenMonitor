@@ -962,6 +962,7 @@ async function showSession(sid) {
        <td class="text-right num">${fmtUsd(r.total_usd)}</td>
        <td class="text-right num">${fmtInt(r.tools)}</td>
      </tr>`).join("");
+  $("#session-detail").scrollIntoView({behavior: "smooth"});
 }
 
 async function loadTools() {
