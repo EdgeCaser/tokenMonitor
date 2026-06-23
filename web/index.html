@@ -534,6 +534,19 @@
 
     <div class="grid grid-cols-2 gap-4">
       <div class="bg-white rounded shadow p-4">
+        <h2 class="font-semibold mb-1">Daily token weather</h2>
+        <div class="subhead mb-3">Each dot is a day: x = tokens, y = dollars. High-left dots are pricey for their size.</div>
+        <div style="height: 280px;"><canvas id="chart-analytics-token-dollar"></canvas></div>
+      </div>
+      <div class="bg-white rounded shadow p-4">
+        <h2 class="font-semibold mb-1">Cost per million tokens</h2>
+        <div class="subhead mb-3">Daily effective $/MTok. Spikes usually mean pricier model mix or less cache reuse.</div>
+        <div style="height: 280px;"><canvas id="chart-analytics-cost-mtok"></canvas></div>
+      </div>
+    </div>
+
+    <div class="grid grid-cols-2 gap-4">
+      <div class="bg-white rounded shadow p-4">
         <h2 class="font-semibold mb-1">Project efficiency lab</h2>
         <div class="subhead mb-3">Find context-heavy projects and oddly expensive token mixes.</div>
         <table class="w-full text-sm">
@@ -556,6 +569,34 @@
             <th class="text-right">$</th>
           </tr></thead>
           <tbody id="analytics-token-hogs"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="grid grid-cols-2 gap-4">
+      <div class="bg-white rounded shadow p-4">
+        <h2 class="font-semibold mb-1">Daily anomaly detector</h2>
+        <div class="subhead mb-3">Days with unusually high spend or token volume relative to this selected range.</div>
+        <table class="w-full text-sm">
+          <thead><tr class="text-slate-500 text-left">
+            <th>day</th>
+            <th class="text-right">tokens</th>
+            <th class="text-right">$</th>
+            <th class="text-right">score</th>
+          </tr></thead>
+          <tbody id="analytics-anomalies"></tbody>
+        </table>
+      </div>
+      <div class="bg-white rounded shadow p-4">
+        <h2 class="font-semibold mb-1">Context bloat suspects</h2>
+        <div class="subhead mb-3">Sessions with the largest average token load per turn.</div>
+        <table class="w-full text-sm">
+          <thead><tr class="text-slate-500 text-left">
+            <th>session</th><th>project</th>
+            <th class="text-right">tokens/turn</th>
+            <th class="text-right">turns</th>
+          </tr></thead>
+          <tbody id="analytics-context-bloat"></tbody>
         </table>
       </div>
     </div>
@@ -1421,6 +1462,16 @@ function insightCard(title, value, detail, accent = "border-slate-200") {
   </div>`;
 }
 
+function mean(nums) {
+  return nums.length ? nums.reduce((a, b) => a + b, 0) / nums.length : 0;
+}
+
+function stdev(nums) {
+  if (nums.length < 2) return 0;
+  const m = mean(nums);
+  return Math.sqrt(nums.reduce((a, b) => a + (b - m) ** 2, 0) / (nums.length - 1));
+}
+
 async function loadAnalytics() {
   const [daily, models, hosts, hourly, projects, sessions, outliers, tokenStats, tokenTypes] = await Promise.all([
     spendSeries("day", "none", { limit: 730 }),
@@ -1583,6 +1634,90 @@ async function loadAnalytics() {
       },
     },
   });
+
+  destroyChart("analyticsTokenDollar");
+  charts.analyticsTokenDollar = new Chart($("#chart-analytics-token-dollar"), {
+    type: "scatter",
+    data: {
+      datasets: [{
+        label: "day",
+        data: daily.map(r => ({
+          x: Number(r.tokens || 0),
+          y: Number(r.usd || 0),
+          day: fmtBucketLabel(r.bucket),
+        })),
+        borderColor: "rgb(99,102,241)",
+        backgroundColor: "rgba(99,102,241,0.45)",
+        pointRadius: 4,
+      }],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: { callbacks: { label: (c) =>
+          `${c.raw.day}: ${fmtTokenShort(c.raw.x)} tokens, ${fmtUsd(c.raw.y)}` } },
+      },
+      scales: {
+        x: { title: { display: true, text: "tokens" }, ticks: { callback: (v) => fmtTokenShort(v) } },
+        y: { title: { display: true, text: "$ spend" }, ticks: { callback: (v) => "$" + v } },
+      },
+    },
+  });
+
+  const costRows = daily
+    .filter(r => Number(r.tokens || 0) > 0)
+    .map(r => ({...r, usd_per_mtok: 1_000_000 * Number(r.usd || 0) / Number(r.tokens || 1)}));
+  renderTimeSeriesChart("analyticsCostMtok", $("#chart-analytics-cost-mtok"),
+    costRows.map(r => ({bucket: r.bucket, series: "$/MTok", usd: r.usd_per_mtok})), {
+      type: "line",
+      stacked: false,
+      legend: false,
+      metric: "usd",
+    });
+  if (charts.analyticsCostMtok.data.datasets[0]) {
+    charts.analyticsCostMtok.data.datasets[0].borderColor = "rgb(244,63,94)";
+    charts.analyticsCostMtok.data.datasets[0].backgroundColor = "rgba(244,63,94,0.10)";
+    charts.analyticsCostMtok.data.datasets[0].fill = true;
+    charts.analyticsCostMtok.update();
+  }
+
+  const usdMean = mean(daily.map(r => Number(r.usd || 0)));
+  const usdSd = stdev(daily.map(r => Number(r.usd || 0))) || 1;
+  const tokMean = mean(daily.map(r => Number(r.tokens || 0)));
+  const tokSd = stdev(daily.map(r => Number(r.tokens || 0))) || 1;
+  const anomalies = daily
+    .map(r => {
+      const usdZ = (Number(r.usd || 0) - usdMean) / usdSd;
+      const tokZ = (Number(r.tokens || 0) - tokMean) / tokSd;
+      return {...r, score: Math.max(usdZ, tokZ)};
+    })
+    .filter(r => r.score > 1.5)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 12);
+  $("#analytics-anomalies").innerHTML = anomalies.length
+    ? anomalies.map(r =>
+      `<tr class="border-t hover:bg-slate-50">
+         <td class="py-1">${fmtBucketLabel(r.bucket)}</td>
+         <td class="text-right num">${fmtTokenShort(r.tokens)}</td>
+         <td class="text-right num">${fmtUsd(r.usd)}</td>
+         <td class="text-right num">${r.score.toFixed(1)}σ</td>
+       </tr>`).join("")
+    : `<tr><td class="py-2 text-slate-400" colspan="4">no unusual days in this range</td></tr>`;
+
+  const bloat = sessions
+    .filter(s => Number(s.turns || 0) > 0)
+    .map(s => ({...s, tokensPerTurn: Number(s.tokens || 0) / Number(s.turns || 1)}))
+    .sort((a, b) => b.tokensPerTurn - a.tokensPerTurn)
+    .slice(0, 12);
+  $("#analytics-context-bloat").innerHTML = bloat.map(s =>
+    `<tr class="border-t hover:bg-slate-50">
+       <td class="py-1 font-mono text-xs">${s.session_id.slice(0,8)}…${s.session_id.slice(-4)}</td>
+       <td class="max-w-[190px] truncate" title="${s.project || ''}">${s.project || ''}</td>
+       <td class="text-right num">${fmtTokenShort(s.tokensPerTurn)}</td>
+       <td class="text-right num">${fmtInt(s.turns)}</td>
+     </tr>`).join("");
 
   const total = sumUsd(daily);
   const topProject = projects[0];
