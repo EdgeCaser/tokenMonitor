@@ -1023,6 +1023,8 @@ def turn_explorer(
     min_usd: float | None = None,
     limit: int = 100,
     since: str | None = None,
+    day: str | None = None,
+    timezone: str | None = "America/Los_Angeles",
 ) -> list[tuple]:
     """Filterable turn-level listing for the explorer tab."""
     cutoff = parse_since(since)
@@ -1031,6 +1033,9 @@ def turn_explorer(
     if cutoff:
         where.append("t.ts >= ?")
         params.append(cutoff)
+    if day:
+        where.append(f"CAST(date_trunc('day', {_local_ts_expr(timezone).replace('ts', 't.ts')}) AS DATE) = CAST(? AS DATE)")
+        params.append(day)
     if model:
         where.append("t.model = ?")
         params.append(model)

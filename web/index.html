@@ -484,6 +484,21 @@
 
   <!-- ANALYTICS -->
   <section data-pane="analytics" class="hidden space-y-4">
+    <div class="bg-white rounded shadow p-4">
+      <div class="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h2 class="font-semibold">Forensic presets</h2>
+          <div class="subhead">Jump from weird aggregate signals into the rows that explain them.</div>
+        </div>
+        <div class="flex flex-wrap items-center gap-2 text-sm">
+          <button class="border rounded px-3 py-1 bg-white hover:bg-slate-50" data-preset="runaway">runaway sessions</button>
+          <button class="border rounded px-3 py-1 bg-white hover:bg-slate-50" data-preset="context">context bloat</button>
+          <button class="border rounded px-3 py-1 bg-white hover:bg-slate-50" data-preset="cache">cache churn</button>
+          <button class="border rounded px-3 py-1 bg-white hover:bg-slate-50" data-preset="night">night work</button>
+          <button id="copy-turn-query" class="border rounded px-3 py-1 bg-slate-800 text-white hover:bg-slate-700">copy current turns API</button>
+        </div>
+      </div>
+    </div>
     <div class="grid grid-cols-3 gap-4" id="analytics-cards"></div>
     <div class="grid grid-cols-4 gap-4" id="token-cards"></div>
 
@@ -740,6 +755,7 @@ const PALETTE = [
 
 let charts = {};
 let spendZoom = { start: 0, end: null };
+let turnDrilldown = {};
 function destroyChart(name) {
   if (charts[name]) { charts[name].destroy(); delete charts[name]; }
 }
@@ -769,6 +785,8 @@ $("#spend-zoom-out").addEventListener("click", () => adjustSpendZoom(1.55));
 $("#spend-zoom-reset").addEventListener("click", () => { spendZoom = { start: 0, end: null }; applySpendZoom(); });
 $("#spend-pan-left").addEventListener("click", () => panSpend(-1));
 $("#spend-pan-right").addEventListener("click", () => panSpend(1));
+document.querySelectorAll("[data-preset]").forEach(b => b.addEventListener("click", () => runPreset(b.dataset.preset)));
+$("#copy-turn-query").addEventListener("click", () => copyCurrentTurnsApi());
 
 function currentTab() {
   return document.querySelector(".tab.active").dataset.tab;
@@ -868,6 +886,81 @@ async function load(tab) {
   if (tab === "spend")      await loadSpend();
   if (tab === "analytics")  await loadAnalytics();
   if (tab === "quotas")     await loadQuotas();
+}
+
+function setTurnFilters({model = "", project = "", tool = "", minUsd = ""} = {}) {
+  $("#t-flt-model").value = model;
+  $("#t-flt-project").value = project;
+  $("#t-flt-tool").value = tool;
+  $("#t-flt-min-usd").value = minUsd;
+}
+
+function drillTurns(params = {}) {
+  turnDrilldown = {...params};
+  setTurnFilters({
+    model: params.model || "",
+    project: params.project || "",
+    tool: params.tool || "",
+    minUsd: params.min_usd || "",
+  });
+  setActive("turns");
+}
+
+function drillDay(bucket) {
+  const day = (bucket || "").slice(0, 10);
+  if (day) drillTurns({day, since: "all"});
+}
+
+function drillProject(project) {
+  if (project) drillTurns({project});
+}
+
+function drillModel(model) {
+  if (model) drillTurns({model});
+}
+
+async function drillSession(sessionId) {
+  if (!sessionId) return;
+  setActive("sessions");
+  await showSession(sessionId);
+}
+
+function runPreset(name) {
+  if (name === "runaway") {
+    setActive("sessions");
+  } else if (name === "context") {
+    setActive("analytics");
+    document.getElementById("analytics-context-bloat")?.scrollIntoView({behavior: "smooth", block: "center"});
+  } else if (name === "cache") {
+    setActive("cache");
+  } else if (name === "night") {
+    setActive("patterns");
+  }
+}
+
+function currentTurnsApiPath() {
+  const params = new URLSearchParams();
+  const m = $("#t-flt-model").value;       if (m) params.set("model", m);
+  const p = $("#t-flt-project").value;     if (p) params.set("project", p);
+  const t = $("#t-flt-tool").value;        if (t) params.set("tool", t);
+  const u = $("#t-flt-min-usd").value;     if (u) params.set("min_usd", u);
+  if (host()) params.set("host", host());
+  params.set("since", turnDrilldown.since || since());
+  if (turnDrilldown.day) {
+    params.set("day", turnDrilldown.day);
+    params.set("timezone", CHART_TZ);
+  }
+  params.set("limit", "200");
+  return `/api/turns?${params.toString()}`;
+}
+
+async function copyCurrentTurnsApi() {
+  const url = location.origin + currentTurnsApiPath();
+  try {
+    await navigator.clipboard.writeText(url);
+  } catch (e) {
+    window.prompt("Copy turns API URL", url);
+  }
 }
 
 function colorFor(i, alpha = 1) {
@@ -1009,11 +1102,23 @@ function panSpend(dir) {
 // Wire turn-explorer filter button + close
 document.addEventListener("DOMContentLoaded", () => {
   const apply = $("#t-flt-apply");
-  if (apply) apply.addEventListener("click", () => loadTurns());
+  if (apply) apply.addEventListener("click", () => { turnDrilldown = {}; loadTurns(); });
   const close = $("#t-turn-close");
   if (close) close.addEventListener("click", () =>
     $("#t-turn-detail").classList.add("hidden")
   );
+  document.querySelector('[data-pane="analytics"]')?.addEventListener("click", (e) => {
+    const row = e.target.closest("[data-drill-project],[data-drill-model],[data-drill-day],[data-drill-host],[data-session]");
+    if (!row) return;
+    if (row.dataset.drillProject) drillProject(decodeURIComponent(row.dataset.drillProject));
+    if (row.dataset.drillModel) drillModel(decodeURIComponent(row.dataset.drillModel));
+    if (row.dataset.drillDay) drillDay(row.dataset.drillDay);
+    if (row.dataset.drillHost) {
+      $("#host").value = decodeURIComponent(row.dataset.drillHost);
+      setActive("overview");
+    }
+    if (row.dataset.session) drillSession(row.dataset.session);
+  });
 });
 
 // === SVG heatmap helpers ===
@@ -1345,15 +1450,7 @@ async function loadBranches() {
 }
 
 async function loadTurns() {
-  const params = new URLSearchParams();
-  const m = $("#t-flt-model").value;       if (m) params.set("model", m);
-  const p = $("#t-flt-project").value;     if (p) params.set("project", p);
-  const t = $("#t-flt-tool").value;        if (t) params.set("tool", t);
-  const u = $("#t-flt-min-usd").value;     if (u) params.set("min_usd", u);
-  if (host()) params.set("host", host());
-  params.set("since", since());
-  params.set("limit", "200");
-  const rows = await api(`/api/turns?${params.toString()}`);
+  const rows = await api(currentTurnsApiPath());
   $("#t-turns").innerHTML = rows.map(r =>
     `<tr class="border-t hover:bg-slate-50 cursor-pointer" data-turn="${r.uuid}">
        <td class="py-1 text-xs">${r.ts ? r.ts.slice(0,16).replace('T',' ') : '—'}</td>
@@ -1582,7 +1679,7 @@ async function loadAnalytics() {
     .sort((a, b) => b.tokensPerTurn - a.tokensPerTurn)
     .slice(0, 12);
   $("#analytics-efficiency").innerHTML = efficiencyRows.map(p =>
-    `<tr class="border-t hover:bg-slate-50">
+    `<tr class="border-t hover:bg-slate-50 cursor-pointer" data-drill-project="${encodeURIComponent(p.project_label)}">
        <td class="py-1 max-w-[220px] truncate" title="${p.project_label}">${p.project_label}</td>
        <td class="text-right num">${fmtTokenShort(p.tokensPerTurn)}</td>
        <td class="text-right num">${fmtUsd(p.usdPerMtok)}</td>
@@ -1594,7 +1691,7 @@ async function loadAnalytics() {
     .sort((a, b) => Number(b.tokens || 0) - Number(a.tokens || 0))
     .slice(0, 12);
   $("#analytics-token-hogs").innerHTML = hogs.map(s =>
-    `<tr class="border-t hover:bg-slate-50">
+    `<tr class="border-t hover:bg-slate-50 cursor-pointer" data-session="${s.session_id}">
        <td class="py-1 font-mono text-xs">${s.session_id.slice(0,8)}…${s.session_id.slice(-4)}</td>
        <td class="max-w-[190px] truncate" title="${s.project || ''}">${s.project || ''}</td>
        <td class="text-right num">${fmtTokenShort(s.tokens)}</td>
@@ -1697,6 +1794,7 @@ async function loadAnalytics() {
         data: daily.map(r => ({
           x: Number(r.tokens || 0),
           y: Number(r.usd || 0),
+          bucket: r.bucket,
           day: fmtBucketLabel(r.bucket),
         })),
         borderColor: "rgb(99,102,241)",
@@ -1711,6 +1809,11 @@ async function loadAnalytics() {
         legend: { display: false },
         tooltip: { callbacks: { label: (c) =>
           `${c.raw.day}: ${fmtTokenShort(c.raw.x)} tokens, ${fmtUsd(c.raw.y)}` } },
+      },
+      onClick: (evt, elements) => {
+        if (!elements.length) return;
+        const point = charts.analyticsTokenDollar.data.datasets[0].data[elements[0].index];
+        drillDay(point.bucket);
       },
       scales: {
         x: { title: { display: true, text: "tokens" }, ticks: { callback: (v) => fmtTokenShort(v) } },
@@ -1751,7 +1854,7 @@ async function loadAnalytics() {
     .slice(0, 12);
   $("#analytics-anomalies").innerHTML = anomalies.length
     ? anomalies.map(r =>
-      `<tr class="border-t hover:bg-slate-50">
+      `<tr class="border-t hover:bg-slate-50 cursor-pointer" data-drill-day="${r.bucket}">
          <td class="py-1">${fmtBucketLabel(r.bucket)}</td>
          <td class="text-right num">${fmtTokenShort(r.tokens)}</td>
          <td class="text-right num">${fmtUsd(r.usd)}</td>
@@ -1765,7 +1868,7 @@ async function loadAnalytics() {
     .sort((a, b) => b.tokensPerTurn - a.tokensPerTurn)
     .slice(0, 12);
   $("#analytics-context-bloat").innerHTML = bloat.map(s =>
-    `<tr class="border-t hover:bg-slate-50">
+    `<tr class="border-t hover:bg-slate-50 cursor-pointer" data-session="${s.session_id}">
        <td class="py-1 font-mono text-xs">${s.session_id.slice(0,8)}…${s.session_id.slice(-4)}</td>
        <td class="max-w-[190px] truncate" title="${s.project || ''}">${s.project || ''}</td>
        <td class="text-right num">${fmtTokenShort(s.tokensPerTurn)}</td>
@@ -1786,7 +1889,7 @@ async function loadAnalytics() {
   }).sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta)).slice(0, 10);
   $("#analytics-model-drift").innerHTML = drift.map(r => {
     const cls = r.delta > 5 ? "text-rose-600" : r.delta < -5 ? "text-emerald-600" : "text-slate-500";
-    return `<tr class="border-t hover:bg-slate-50">
+    return `<tr class="border-t hover:bg-slate-50 cursor-pointer" data-drill-model="${encodeURIComponent(r.model)}">
        <td class="py-1 max-w-[260px] truncate" title="${r.model}">${r.model}</td>
        <td class="text-right num">${r.recentShare.toFixed(1)}%</td>
        <td class="text-right num">${r.priorShare.toFixed(1)}%</td>
@@ -1824,7 +1927,7 @@ async function loadAnalytics() {
 
   const hostTotal = hostRows.reduce((a, r) => a + Number(r.usd || 0), 0);
   $("#analytics-host-mix").innerHTML = hostRows.map(r =>
-    `<tr class="border-t hover:bg-slate-50">
+    `<tr class="border-t hover:bg-slate-50 cursor-pointer" data-drill-host="${encodeURIComponent(r.host)}">
        <td class="py-1 max-w-[220px] truncate" title="${r.host}">${r.host}</td>
        <td class="text-right num">${hostTotal ? (100 * Number(r.usd || 0) / hostTotal).toFixed(1) : "0.0"}%</td>
        <td class="text-right num">${fmtInt(r.turns)}</td>

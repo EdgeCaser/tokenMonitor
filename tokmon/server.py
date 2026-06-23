@@ -210,11 +210,14 @@ def api_turns(
     tool: str | None = Query(None),
     min_usd: float | None = Query(None),
     since: str = Query("all"),
+    day: str | None = Query(None),
+    timezone: str = Query("America/Los_Angeles"),
     limit: int = Query(100),
 ):
     conn = _conn()
     rows = A.turn_explorer(conn, model=model, project=project, host=host,
-                           tool=tool, min_usd=min_usd, since=since, limit=limit)
+                           tool=tool, min_usd=min_usd, since=since, limit=limit,
+                           day=day, timezone=timezone)
     keys = ["uuid", "ts", "host", "project", "session_id", "model",
             "input_tokens", "output_tokens", "cache_write", "cache_read",
             "total_usd", "n_tools", "tools"]

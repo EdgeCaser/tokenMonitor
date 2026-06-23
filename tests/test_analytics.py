@@ -197,6 +197,21 @@ def test_calendar_heatmap_includes_tokens(loaded):
     assert sum(int(r[3]) for r in rows) == A.summary(loaded)["input_tokens"] + A.summary(loaded)["output_tokens"] + A.summary(loaded)["cache_write_5m"] + A.summary(loaded)["cache_write_1h"] + A.summary(loaded)["cache_read"]
 
 
+def test_turn_explorer_filters_by_display_day(loaded):
+    rows = A.turn_explorer(
+        loaded,
+        day="2026-06-20",
+        timezone="America/Los_Angeles",
+    )
+    assert rows
+    assert {r[0] for r in rows} >= {"a1", "a2"}
+    assert A.turn_explorer(
+        loaded,
+        day="2026-06-19",
+        timezone="America/Los_Angeles",
+    ) == []
+
+
 def test_parse_since():
     assert A.parse_since("all") is None
     assert A.parse_since(None) is None
