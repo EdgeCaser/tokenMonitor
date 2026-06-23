@@ -600,6 +600,56 @@
         </table>
       </div>
     </div>
+
+    <div class="grid grid-cols-2 gap-4">
+      <div class="bg-white rounded shadow p-4">
+        <h2 class="font-semibold mb-1">Model drift radar</h2>
+        <div class="subhead mb-3">Recent model mix versus earlier days in this range. Positive delta means the model is taking over.</div>
+        <table class="w-full text-sm">
+          <thead><tr class="text-slate-500 text-left">
+            <th>model</th>
+            <th class="text-right">recent share</th>
+            <th class="text-right">prior share</th>
+            <th class="text-right">delta</th>
+          </tr></thead>
+          <tbody id="analytics-model-drift"></tbody>
+        </table>
+      </div>
+      <div class="bg-white rounded shadow p-4">
+        <h2 class="font-semibold mb-1">Cache health clinic</h2>
+        <div class="subhead mb-3">Read-heavy cache is good. Write-heavy cache means you may be paying to populate prefixes that are not reused.</div>
+        <table class="w-full text-sm">
+          <thead><tr class="text-slate-500 text-left">
+            <th>model</th>
+            <th class="text-right">hit %</th>
+            <th class="text-right">read/write</th>
+            <th class="text-right">verdict</th>
+          </tr></thead>
+          <tbody id="analytics-cache-health"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="grid grid-cols-2 gap-4">
+      <div class="bg-white rounded shadow p-4">
+        <h2 class="font-semibold mb-1">Off-hours oracle</h2>
+        <div class="subhead mb-3">Night and weekend usage. Useful for finding hidden work rhythms and questionable life choices.</div>
+        <div id="analytics-offhours" class="grid grid-cols-2 gap-3"></div>
+      </div>
+      <div class="bg-white rounded shadow p-4">
+        <h2 class="font-semibold mb-1">Host mix sanity</h2>
+        <div class="subhead mb-3">Which machines are contributing spend. A surprise host here usually means sync/import behavior changed.</div>
+        <table class="w-full text-sm">
+          <thead><tr class="text-slate-500 text-left">
+            <th>host</th>
+            <th class="text-right">share</th>
+            <th class="text-right">turns</th>
+            <th class="text-right">$</th>
+          </tr></thead>
+          <tbody id="analytics-host-mix"></tbody>
+        </table>
+      </div>
+    </div>
   </section>
 
   <!-- QUOTAS -->
@@ -1473,7 +1523,7 @@ function stdev(nums) {
 }
 
 async function loadAnalytics() {
-  const [daily, models, hosts, hourly, projects, sessions, outliers, tokenStats, tokenTypes] = await Promise.all([
+  const [daily, models, hosts, hourly, projects, sessions, outliers, tokenStats, tokenTypes, cacheRows, heatRows, hostRows] = await Promise.all([
     spendSeries("day", "none", { limit: 730 }),
     api(`/api/spend_timeseries?bucket=day&stack=model&since=${since()}&limit=180&series_limit=8${hostQ()}${tzQ()}`),
     api(`/api/spend_timeseries?bucket=day&stack=host&since=${since()}&limit=180&series_limit=10${hostQ()}${tzQ()}`),
@@ -1483,6 +1533,9 @@ async function loadAnalytics() {
     api(`/api/outliers${hostQ() ? "?" + hostQ().slice(1) : ""}`).catch(() => []),
     api(`/api/token_stats?since=${since()}${hostQ()}`),
     api(`/api/token_timeseries?bucket=day&since=${since()}&limit=365${hostQ()}${tzQ()}`),
+    api(`/api/cache${hostQ() ? "?" + hostQ().slice(1) : ""}`),
+    api(`/api/heatmap?since=${since()}${hostQ()}`),
+    api(`/api/spend?by=host&since=${since()}&limit=50`),
   ]);
 
   renderTimeSeriesChart("analyticsTokenTypes", $("#chart-analytics-token-types"), tokenTypes, {
@@ -1717,6 +1770,65 @@ async function loadAnalytics() {
        <td class="max-w-[190px] truncate" title="${s.project || ''}">${s.project || ''}</td>
        <td class="text-right num">${fmtTokenShort(s.tokensPerTurn)}</td>
        <td class="text-right num">${fmtInt(s.turns)}</td>
+     </tr>`).join("");
+
+  const modelBuckets = [...new Set(models.map(r => r.bucket))];
+  const recentBuckets = new Set(modelBuckets.slice(-14));
+  const modelNames = [...new Set(models.map(r => r.series))];
+  const recentTotal = models.filter(r => recentBuckets.has(r.bucket)).reduce((a, r) => a + Number(r.usd || 0), 0);
+  const priorTotal = models.filter(r => !recentBuckets.has(r.bucket)).reduce((a, r) => a + Number(r.usd || 0), 0);
+  const drift = modelNames.map(model => {
+    const recent = models.filter(r => r.series === model && recentBuckets.has(r.bucket)).reduce((a, r) => a + Number(r.usd || 0), 0);
+    const prior = models.filter(r => r.series === model && !recentBuckets.has(r.bucket)).reduce((a, r) => a + Number(r.usd || 0), 0);
+    const recentShare = recentTotal ? 100 * recent / recentTotal : 0;
+    const priorShare = priorTotal ? 100 * prior / priorTotal : 0;
+    return {model, recentShare, priorShare, delta: recentShare - priorShare};
+  }).sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta)).slice(0, 10);
+  $("#analytics-model-drift").innerHTML = drift.map(r => {
+    const cls = r.delta > 5 ? "text-rose-600" : r.delta < -5 ? "text-emerald-600" : "text-slate-500";
+    return `<tr class="border-t hover:bg-slate-50">
+       <td class="py-1 max-w-[260px] truncate" title="${r.model}">${r.model}</td>
+       <td class="text-right num">${r.recentShare.toFixed(1)}%</td>
+       <td class="text-right num">${r.priorShare.toFixed(1)}%</td>
+       <td class="text-right num ${cls}">${r.delta >= 0 ? "+" : ""}${r.delta.toFixed(1)} pts</td>
+     </tr>`;
+  }).join("");
+
+  $("#analytics-cache-health").innerHTML = cacheRows.map(r => {
+    const read = Number(r.cache_read || 0);
+    const write = Number(r.cache_write || 0);
+    const ratio = read / Math.max(1, write);
+    const verdict = ratio >= 5 ? "reusing well" : ratio >= 1 ? "okay" : "write-heavy";
+    const cls = ratio >= 5 ? "text-emerald-700" : ratio >= 1 ? "text-amber-700" : "text-rose-700";
+    return `<tr class="border-t hover:bg-slate-50">
+       <td class="py-1 max-w-[260px] truncate" title="${r.model}">${r.model}</td>
+       <td class="text-right num">${(r.cache_hit_pct ?? 0).toFixed(1)}%</td>
+       <td class="text-right num">${ratio.toFixed(1)}x</td>
+       <td class="text-right ${cls}">${verdict}</td>
+     </tr>`;
+  }).join("");
+
+  const heatTotalUsd = heatRows.reduce((a, r) => a + Number(r.usd || 0), 0);
+  const heatTotalTurns = heatRows.reduce((a, r) => a + Number(r.turns || 0), 0);
+  const nightRows = heatRows.filter(r => Number(r.hour) < 6 || Number(r.hour) >= 22);
+  const weekendRows = heatRows.filter(r => Number(r.dow) === 0 || Number(r.dow) === 6);
+  const nightUsd = nightRows.reduce((a, r) => a + Number(r.usd || 0), 0);
+  const weekendUsd = weekendRows.reduce((a, r) => a + Number(r.usd || 0), 0);
+  const nightTurns = nightRows.reduce((a, r) => a + Number(r.turns || 0), 0);
+  const weekendTurns = weekendRows.reduce((a, r) => a + Number(r.turns || 0), 0);
+  $("#analytics-offhours").innerHTML =
+    insightCard("night spend", heatTotalUsd ? (100 * nightUsd / heatTotalUsd).toFixed(1) + "%" : "—", `${fmtUsd(nightUsd)} after 10pm or before 6am.`, "border-indigo-200") +
+    insightCard("weekend spend", heatTotalUsd ? (100 * weekendUsd / heatTotalUsd).toFixed(1) + "%" : "—", `${fmtUsd(weekendUsd)} on Saturday/Sunday.`, "border-amber-200") +
+    insightCard("night turns", heatTotalTurns ? (100 * nightTurns / heatTotalTurns).toFixed(1) + "%" : "—", `${fmtInt(nightTurns)} turns outside respectable hours.`, "border-slate-200") +
+    insightCard("weekend turns", heatTotalTurns ? (100 * weekendTurns / heatTotalTurns).toFixed(1) + "%" : "—", `${fmtInt(weekendTurns)} weekend turns.`, "border-slate-200");
+
+  const hostTotal = hostRows.reduce((a, r) => a + Number(r.usd || 0), 0);
+  $("#analytics-host-mix").innerHTML = hostRows.map(r =>
+    `<tr class="border-t hover:bg-slate-50">
+       <td class="py-1 max-w-[220px] truncate" title="${r.host}">${r.host}</td>
+       <td class="text-right num">${hostTotal ? (100 * Number(r.usd || 0) / hostTotal).toFixed(1) : "0.0"}%</td>
+       <td class="text-right num">${fmtInt(r.turns)}</td>
+       <td class="text-right num">${fmtUsd(r.usd)}</td>
      </tr>`).join("");
 
   const total = sumUsd(daily);
