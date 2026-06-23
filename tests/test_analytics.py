@@ -190,6 +190,13 @@ def test_token_stats_returns_equivalences(loaded):
     assert "phone_charges" in stats
 
 
+def test_calendar_heatmap_includes_tokens(loaded):
+    rows = A.calendar_heatmap(loaded, days_back=3650)
+    assert rows
+    assert len(rows[0]) == 4
+    assert sum(int(r[3]) for r in rows) == A.summary(loaded)["input_tokens"] + A.summary(loaded)["output_tokens"] + A.summary(loaded)["cache_write_5m"] + A.summary(loaded)["cache_write_1h"] + A.summary(loaded)["cache_read"]
+
+
 def test_parse_since():
     assert A.parse_since("all") is None
     assert A.parse_since(None) is None

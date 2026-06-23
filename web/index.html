@@ -199,6 +199,12 @@
           <span class="tip" data-tip="What: each square is one day, colored by total spend on that day (log-ish bucketed: lighter = lower, darker = higher).&#10;Why care: At-a-glance view of your work rhythm — vacations show up as gaps, sprints as dark clusters. Hover any square for the exact $ and turn count.">?</span>
         </h2>
         <div class="flex items-center gap-2 text-xs text-slate-500">
+          <label class="text-slate-600">unit</label>
+          <select id="calendar-unit" class="border rounded px-2 py-1 text-xs bg-white">
+            <option value="usd">$</option>
+            <option value="tokens">tokens</option>
+            <option value="turns">turns</option>
+          </select>
           <span>less</span>
           <span class="inline-block w-3 h-3 bg-slate-100 border border-slate-200"></span>
           <span class="inline-block w-3 h-3 bg-emerald-200"></span>
@@ -525,6 +531,34 @@
       <div class="subhead mb-3">Bubble size = spend, x = turns, y = average $/turn. Farther right/up means expensive and frequent.</div>
       <div style="height: 320px;"><canvas id="chart-analytics-projects"></canvas></div>
     </div>
+
+    <div class="grid grid-cols-2 gap-4">
+      <div class="bg-white rounded shadow p-4">
+        <h2 class="font-semibold mb-1">Project efficiency lab</h2>
+        <div class="subhead mb-3">Find context-heavy projects and oddly expensive token mixes.</div>
+        <table class="w-full text-sm">
+          <thead><tr class="text-slate-500 text-left">
+            <th>project</th>
+            <th class="text-right">tokens/turn</th>
+            <th class="text-right">$/MTok</th>
+            <th class="text-right">turns</th>
+          </tr></thead>
+          <tbody id="analytics-efficiency"></tbody>
+        </table>
+      </div>
+      <div class="bg-white rounded shadow p-4">
+        <h2 class="font-semibold mb-1">Token hog sessions</h2>
+        <div class="subhead mb-3">Biggest sessions by raw token volume. These are context-bloat candidates.</div>
+        <table class="w-full text-sm">
+          <thead><tr class="text-slate-500 text-left">
+            <th>session</th><th>project</th>
+            <th class="text-right">tokens</th>
+            <th class="text-right">$</th>
+          </tr></thead>
+          <tbody id="analytics-token-hogs"></tbody>
+        </table>
+      </div>
+    </div>
   </section>
 
   <!-- QUOTAS -->
@@ -637,6 +671,7 @@ $("#host").addEventListener("change", () => load(currentTab()));
 $("#spend-bucket").addEventListener("change", () => { spendZoom = { start: 0, end: null }; load("spend"); });
 $("#spend-stack").addEventListener("change", () => { spendZoom = { start: 0, end: null }; load("spend"); });
 $("#spend-unit").addEventListener("change", () => load("spend"));
+$("#calendar-unit").addEventListener("change", () => refreshCalendar());
 $("#q-metric").addEventListener("change", () => load("quotas"));
 $("#spend-zoom-in").addEventListener("click", () => adjustSpendZoom(0.65));
 $("#spend-zoom-out").addEventListener("click", () => adjustSpendZoom(1.55));
@@ -909,11 +944,27 @@ function bucket5(v, max) {
 const CAL_PALETTE = ["#f1f5f9", "#a7f3d0", "#34d399", "#059669", "#064e3b"];
 const HEAT_PALETTE = ["#f1f5f9", "#bfdbfe", "#60a5fa", "#2563eb", "#1e3a8a"];
 
+let calendarRows = [];
+function calendarMetricValue(row) {
+  const unit = $("#calendar-unit")?.value || "usd";
+  return Number(row?.[unit] || 0);
+}
+function fmtCalendarValue(row) {
+  const unit = $("#calendar-unit")?.value || "usd";
+  if (unit === "usd") return fmtUsd(row?.usd || 0);
+  if (unit === "tokens") return fmtTokenShort(row?.tokens || 0);
+  return `${fmtInt(row?.turns || 0)} turns`;
+}
+function refreshCalendar() {
+  renderCalendar(calendarRows);
+}
+
 function renderCalendar(rows) {
+  calendarRows = rows || [];
   const el = $("#calendar");
   el.innerHTML = "";
   const byDay = new Map(rows.map(r => [r.day, r]));
-  const maxUsd = Math.max(...rows.map(r => r.usd), 0.001);
+  const maxValue = Math.max(...rows.map(calendarMetricValue), 0.001);
   const cell = 12, gap = 2;
   const today = new Date();
   // Walk back 365 days, snap to start of week (Sunday)
@@ -934,8 +985,8 @@ function renderCalendar(rows) {
     if (d) {
       const iso = d.toISOString().slice(0, 10);
       const data = byDay.get(iso);
-      const usd = data?.usd || 0;
-      const level = bucket5(usd, maxUsd);
+      const value = calendarMetricValue(data);
+      const level = bucket5(value, maxValue);
       const rect = svg("rect", {
         x: col * (cell + gap), y: row * (cell + gap) + 16,
         width: cell, height: cell, rx: 2, ry: 2,
@@ -943,7 +994,7 @@ function renderCalendar(rows) {
         stroke: "rgba(0,0,0,0.06)",
       });
       const title = svg("title");
-      title.textContent = `${iso} — ${fmtUsd(usd)} (${fmtInt(data?.turns || 0)} turns)`;
+      title.textContent = `${iso} — ${fmtCalendarValue(data)} (${fmtUsd(data?.usd || 0)}, ${fmtTokenShort(data?.tokens || 0)} tokens)`;
       rect.appendChild(title);
       el.appendChild(rect);
       // Month label when month flips (on top row only)
@@ -1371,12 +1422,13 @@ function insightCard(title, value, detail, accent = "border-slate-200") {
 }
 
 async function loadAnalytics() {
-  const [daily, models, hosts, hourly, projects, outliers, tokenStats, tokenTypes] = await Promise.all([
+  const [daily, models, hosts, hourly, projects, sessions, outliers, tokenStats, tokenTypes] = await Promise.all([
     spendSeries("day", "none", { limit: 730 }),
     api(`/api/spend_timeseries?bucket=day&stack=model&since=${since()}&limit=180&series_limit=8${hostQ()}${tzQ()}`),
     api(`/api/spend_timeseries?bucket=day&stack=host&since=${since()}&limit=180&series_limit=10${hostQ()}${tzQ()}`),
     api(`/api/spend_timeseries?bucket=hour&stack=none&since=${since()}&limit=1000${hostQ()}${tzQ()}`),
     api(`/api/spend?by=project&since=${since()}&limit=60${hostQ()}`),
+    api(`/api/spend?by=session&since=${since()}&limit=200${hostQ()}`),
     api(`/api/outliers${hostQ() ? "?" + hostQ().slice(1) : ""}`).catch(() => []),
     api(`/api/token_stats?since=${since()}${hostQ()}`),
     api(`/api/token_timeseries?bucket=day&since=${since()}&limit=365${hostQ()}${tzQ()}`),
@@ -1415,6 +1467,35 @@ async function loadAnalytics() {
     insightCard("carbon confetti", `${tokenStats.co2e_grams} g`, `Using 380 gCO2e/kWh and 0.3 Wh/1k tokens as a deliberately rough estimate.`, "border-lime-200") +
     insightCard("biggest turn", fmtTokenShort(tokenStats.biggest_turn_tokens), `Average turn: ${fmtTokenShort(tokenStats.avg_turn_tokens)} tokens.`, "border-rose-200") +
     insightCard("tokens per $", fmtTokenShort(tokenStats.tokens_per_dollar), `How much context each API-equivalent dollar bought.`, "border-indigo-200");
+
+  const efficiencyRows = projects
+    .filter(p => Number(p.turns || 0) > 0 && Number(p.tokens || 0) > 0)
+    .map(p => ({
+      ...p,
+      tokensPerTurn: Number(p.tokens || 0) / Number(p.turns || 1),
+      usdPerMtok: 1_000_000 * Number(p.usd || 0) / Number(p.tokens || 1),
+    }))
+    .sort((a, b) => b.tokensPerTurn - a.tokensPerTurn)
+    .slice(0, 12);
+  $("#analytics-efficiency").innerHTML = efficiencyRows.map(p =>
+    `<tr class="border-t hover:bg-slate-50">
+       <td class="py-1 max-w-[220px] truncate" title="${p.project_label}">${p.project_label}</td>
+       <td class="text-right num">${fmtTokenShort(p.tokensPerTurn)}</td>
+       <td class="text-right num">${fmtUsd(p.usdPerMtok)}</td>
+       <td class="text-right num">${fmtInt(p.turns)}</td>
+     </tr>`).join("");
+
+  const hogs = sessions
+    .slice()
+    .sort((a, b) => Number(b.tokens || 0) - Number(a.tokens || 0))
+    .slice(0, 12);
+  $("#analytics-token-hogs").innerHTML = hogs.map(s =>
+    `<tr class="border-t hover:bg-slate-50">
+       <td class="py-1 font-mono text-xs">${s.session_id.slice(0,8)}…${s.session_id.slice(-4)}</td>
+       <td class="max-w-[190px] truncate" title="${s.project || ''}">${s.project || ''}</td>
+       <td class="text-right num">${fmtTokenShort(s.tokens)}</td>
+       <td class="text-right num">${fmtUsd(s.usd)}</td>
+     </tr>`).join("");
 
   const cumulative = [];
   let running = 0;

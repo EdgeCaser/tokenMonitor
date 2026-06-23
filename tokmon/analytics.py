@@ -736,7 +736,8 @@ def calendar_heatmap(
         f"""
         SELECT CAST(date_trunc('day', ts) AS DATE) AS day,
                SUM(total_usd) AS usd,
-               COUNT(*) AS turns
+               COUNT(*) AS turns,
+               SUM(input_tokens+output_tokens+cache_write_5m+cache_write_1h+cache_read) AS tokens
         FROM v_turn_cost
         {where}
         GROUP BY day

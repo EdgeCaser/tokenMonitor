@@ -146,7 +146,10 @@ def api_cache(host: str | None = Query(None)):
 def api_calendar(days_back: int = 365, host: str | None = Query(None)):
     conn = _conn()
     rows = A.calendar_heatmap(conn, days_back=days_back, host=host)
-    return [{"day": str(d), "usd": float(u), "turns": int(t)} for d, u, t in rows]
+    return [
+        {"day": str(d), "usd": float(u), "turns": int(t), "tokens": int(tok or 0)}
+        for d, u, t, tok in rows
+    ]
 
 
 @app.get("/api/heatmap")
