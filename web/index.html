@@ -125,6 +125,13 @@
         </div>
         <div id="t-spend" class="num text-3xl font-bold text-emerald-700">—</div>
       </div>
+      <div class="bg-white rounded shadow p-4">
+        <div class="text-xs uppercase text-slate-500">
+          total tokens
+          <span class="tip" data-tip="What: input + output + cache write + cache read tokens.&#10;Why care: The true volume of context Claude handled, including cached context that was reused cheaply.">?</span>
+        </div>
+        <div id="t-tokens" class="num text-3xl font-bold text-sky-700">—</div>
+      </div>
       <div class="bg-emerald-50 rounded shadow p-4 border border-emerald-200">
         <div class="text-xs uppercase text-emerald-700">
           cache saved
@@ -446,6 +453,12 @@
           <option value="project">project</option>
           <option value="host_project">host + project</option>
         </select>
+        <label class="text-sm text-slate-600">unit</label>
+        <select id="spend-unit" class="border rounded px-2 py-1 text-sm bg-white">
+          <option value="usd">$</option>
+          <option value="tokens">tokens</option>
+          <option value="turns">turns</option>
+        </select>
       </div>
       <div class="flex items-center gap-1">
         <button id="spend-pan-left" class="border rounded px-2 py-1 text-sm bg-white" title="earlier">←</button>
@@ -466,6 +479,20 @@
   <!-- ANALYTICS -->
   <section data-pane="analytics" class="hidden space-y-4">
     <div class="grid grid-cols-3 gap-4" id="analytics-cards"></div>
+    <div class="grid grid-cols-4 gap-4" id="token-cards"></div>
+
+    <div class="grid grid-cols-2 gap-4">
+      <div class="bg-white rounded shadow p-4">
+        <h2 class="font-semibold mb-1">Token type stack</h2>
+        <div class="subhead mb-3">Input, output, cache write, and cache read volume over time.</div>
+        <div style="height: 280px;"><canvas id="chart-analytics-token-types"></canvas></div>
+      </div>
+      <div class="bg-white rounded shadow p-4">
+        <h2 class="font-semibold mb-1">Token odometer</h2>
+        <div class="subhead mb-3">Running total tokens consumed in the selected range.</div>
+        <div style="height: 280px;"><canvas id="chart-analytics-token-cumulative"></canvas></div>
+      </div>
+    </div>
 
     <div class="grid grid-cols-2 gap-4">
       <div class="bg-white rounded shadow p-4">
@@ -568,6 +595,15 @@
 <script>
 const fmtInt = (n) => (n == null ? "—" : Number(n).toLocaleString());
 const fmtUsd = (x) => (x == null ? "—" : "$" + Number(x).toFixed(x < 0.01 ? 4 : 2));
+const fmtTokens = (n) => (n == null ? "—" : Number(n).toLocaleString());
+const fmtTokenShort = (n) => {
+  if (n == null) return "—";
+  const v = Number(n);
+  if (v >= 1e9) return (v / 1e9).toFixed(2) + "B";
+  if (v >= 1e6) return (v / 1e6).toFixed(2) + "M";
+  if (v >= 1e3) return (v / 1e3).toFixed(1) + "K";
+  return fmtInt(v);
+};
 const $ = (s) => document.querySelector(s);
 const CHART_TZ = "America/Los_Angeles";
 const browserTz = Intl.DateTimeFormat().resolvedOptions().timeZone || "local";
@@ -600,6 +636,7 @@ $("#since").addEventListener("change", () => load(currentTab()));
 $("#host").addEventListener("change", () => load(currentTab()));
 $("#spend-bucket").addEventListener("change", () => { spendZoom = { start: 0, end: null }; load("spend"); });
 $("#spend-stack").addEventListener("change", () => { spendZoom = { start: 0, end: null }; load("spend"); });
+$("#spend-unit").addEventListener("change", () => load("spend"));
 $("#q-metric").addEventListener("change", () => load("quotas"));
 $("#spend-zoom-in").addEventListener("click", () => adjustSpendZoom(0.65));
 $("#spend-zoom-out").addEventListener("click", () => adjustSpendZoom(1.55));
@@ -712,13 +749,26 @@ function colorFor(i, alpha = 1) {
   return alpha === 1 ? c : c.replace("rgb(", "rgba(").replace(")", `,${alpha})`);
 }
 
-function pivotSeries(rows) {
+function fmtMetric(v, metric) {
+  if (metric === "usd") return fmtUsd(v);
+  if (metric === "tokens") return fmtTokens(Math.round(Number(v || 0)));
+  if (metric === "turns") return fmtInt(Math.round(Number(v || 0)));
+  return fmtInt(v);
+}
+
+function axisMetric(v, metric) {
+  if (metric === "usd") return "$" + v;
+  if (metric === "tokens") return fmtTokenShort(v);
+  return fmtInt(v);
+}
+
+function pivotSeries(rows, metric = "usd") {
   const labels = [...new Set(rows.map(r => r.bucket))];
   const series = [...new Set(rows.map(r => r.series || "total"))];
   const byKey = new Map(rows.map(r => [`${r.bucket}\u0000${r.series || "total"}`, r]));
   const datasets = series.map((name, i) => ({
     label: name,
-    data: labels.map(b => byKey.get(`${b}\u0000${name}`)?.usd || 0),
+    data: labels.map(b => byKey.get(`${b}\u0000${name}`)?.[metric] || 0),
     backgroundColor: colorFor(i, 0.58),
     borderColor: colorFor(i),
     borderWidth: 1.5,
@@ -728,9 +778,9 @@ function pivotSeries(rows) {
   return { labels: labels.map(fmtBucketLabel), rawLabels: labels, datasets };
 }
 
-function renderTimeSeriesChart(name, canvas, rows, { stacked = false, type = "bar", legend = true } = {}) {
+function renderTimeSeriesChart(name, canvas, rows, { stacked = false, type = "bar", legend = true, metric = "usd" } = {}) {
   destroyChart(name);
-  const { labels, datasets } = pivotSeries(rows);
+  const { labels, datasets } = pivotSeries(rows, metric);
   charts[name] = new Chart(canvas, {
     type,
     data: { labels, datasets },
@@ -740,11 +790,11 @@ function renderTimeSeriesChart(name, canvas, rows, { stacked = false, type = "ba
       interaction: { mode: "index", intersect: false },
       plugins: {
         legend: { display: legend, position: "bottom" },
-        tooltip: { callbacks: { label: (c) => `${c.dataset.label}: ${fmtUsd(c.parsed.y)}` } },
+        tooltip: { callbacks: { label: (c) => `${c.dataset.label}: ${fmtMetric(c.parsed.y, metric)}` } },
       },
       scales: {
         x: { stacked, ticks: { maxRotation: 60, autoSkip: true, maxTicksLimit: 48 } },
-        y: { stacked, ticks: { callback: (v) => "$" + v } },
+        y: { stacked, ticks: { callback: (v) => axisMetric(v, metric) } },
       },
     },
   });
@@ -978,6 +1028,11 @@ async function loadOverview() {
   $("#t-sessions").textContent = fmtInt(s.sessions);
   $("#t-projects").textContent = fmtInt(s.projects);
   $("#t-spend").textContent    = fmtUsd(s.total_usd);
+  $("#t-tokens").textContent   = fmtTokenShort(
+    Number(s.input_tokens || 0) + Number(s.output_tokens || 0) +
+    Number(s.cache_write_5m || 0) + Number(s.cache_write_1h || 0) +
+    Number(s.cache_read || 0)
+  );
 
   // Cache savings + burn rate tiles fire in parallel
   api(`/api/cache_savings?since=${since()}${hostQ()}`).then(cs => {
@@ -1271,6 +1326,7 @@ async function loadCache() {
 async function loadSpend() {
   const bucket = $("#spend-bucket").value;
   const stack = $("#spend-stack").value;
+  const metric = $("#spend-unit").value;
   const limit = bucket === "hour" ? 1000 : bucket === "day" ? 730 : 260;
   const rows = await spendSeries(bucket, stack, { limit, seriesLimit: 14 });
   const nBuckets = new Set(rows.map(r => r.bucket)).size;
@@ -1279,6 +1335,7 @@ async function loadSpend() {
     type: "line",
     stacked: stack !== "none",
     legend: stack !== "none",
+    metric,
   });
   if (stack === "none" && charts.spend.data.datasets[0]) {
     charts.spend.data.datasets[0].backgroundColor = "rgba(99,102,241,0.16)";
@@ -1301,6 +1358,10 @@ function sumUsd(rows) {
   return rows.reduce((a, r) => a + Number(r.usd || 0), 0);
 }
 
+function sumTokens(rows) {
+  return rows.reduce((a, r) => a + Number(r.tokens || 0), 0);
+}
+
 function insightCard(title, value, detail, accent = "border-slate-200") {
   return `<div class="bg-white rounded shadow p-4 border ${accent}">
     <div class="text-xs uppercase text-slate-500">${title}</div>
@@ -1310,14 +1371,50 @@ function insightCard(title, value, detail, accent = "border-slate-200") {
 }
 
 async function loadAnalytics() {
-  const [daily, models, hosts, hourly, projects, outliers] = await Promise.all([
+  const [daily, models, hosts, hourly, projects, outliers, tokenStats, tokenTypes] = await Promise.all([
     spendSeries("day", "none", { limit: 730 }),
     api(`/api/spend_timeseries?bucket=day&stack=model&since=${since()}&limit=180&series_limit=8${hostQ()}${tzQ()}`),
     api(`/api/spend_timeseries?bucket=day&stack=host&since=${since()}&limit=180&series_limit=10${hostQ()}${tzQ()}`),
     api(`/api/spend_timeseries?bucket=hour&stack=none&since=${since()}&limit=1000${hostQ()}${tzQ()}`),
     api(`/api/spend?by=project&since=${since()}&limit=60${hostQ()}`),
     api(`/api/outliers${hostQ() ? "?" + hostQ().slice(1) : ""}`).catch(() => []),
+    api(`/api/token_stats?since=${since()}${hostQ()}`),
+    api(`/api/token_timeseries?bucket=day&since=${since()}&limit=365${hostQ()}${tzQ()}`),
   ]);
+
+  renderTimeSeriesChart("analyticsTokenTypes", $("#chart-analytics-token-types"), tokenTypes, {
+    type: "bar",
+    stacked: true,
+    legend: true,
+    metric: "tokens",
+  });
+  const cumulativeTokens = [];
+  let tokenRunning = 0;
+  for (const r of daily) {
+    tokenRunning += Number(r.tokens || 0);
+    cumulativeTokens.push({...r, tokens: tokenRunning, series: "tokens"});
+  }
+  renderTimeSeriesChart("analyticsTokenCumulative", $("#chart-analytics-token-cumulative"), cumulativeTokens, {
+    type: "line",
+    stacked: false,
+    legend: false,
+    metric: "tokens",
+  });
+  if (charts.analyticsTokenCumulative.data.datasets[0]) {
+    charts.analyticsTokenCumulative.data.datasets[0].borderColor = "rgb(2,132,199)";
+    charts.analyticsTokenCumulative.data.datasets[0].backgroundColor = "rgba(2,132,199,0.12)";
+    charts.analyticsTokenCumulative.data.datasets[0].fill = true;
+    charts.analyticsTokenCumulative.update();
+  }
+  $("#token-cards").innerHTML =
+    insightCard("token odometer", fmtTokenShort(tokenStats.total_tokens), `${fmtTokens(tokenStats.total_tokens)} total tokens consumed.`, "border-sky-200") +
+    insightCard("fresh context", fmtTokenShort(tokenStats.fresh_tokens), `${fmtTokenShort(tokenStats.cache_read_tokens)} tokens were cache reads (${tokenStats.cache_share_pct.toFixed(1)}%).`, "border-cyan-200") +
+    insightCard("book pile", `${tokenStats.estimated_books} books`, `${fmtInt(tokenStats.estimated_pages)} pages, roughly ${fmtInt(tokenStats.estimated_words)} words.`, "border-violet-200") +
+    insightCard("reading time", `${tokenStats.estimated_reading_hours} hr`, `At 250 words/minute. Claude has seen a small airport-novel shelf.`, "border-amber-200") +
+    insightCard("toy energy", `${tokenStats.estimated_kwh.toFixed(3)} kWh`, `${tokenStats.phone_charges} phone charges or ${tokenStats.led_bulb_hours} LED-bulb hours. Very rough.`, "border-emerald-200") +
+    insightCard("carbon confetti", `${tokenStats.co2e_grams} g`, `Using 380 gCO2e/kWh and 0.3 Wh/1k tokens as a deliberately rough estimate.`, "border-lime-200") +
+    insightCard("biggest turn", fmtTokenShort(tokenStats.biggest_turn_tokens), `Average turn: ${fmtTokenShort(tokenStats.avg_turn_tokens)} tokens.`, "border-rose-200") +
+    insightCard("tokens per $", fmtTokenShort(tokenStats.tokens_per_dollar), `How much context each API-equivalent dollar bought.`, "border-indigo-200");
 
   const cumulative = [];
   let running = 0;

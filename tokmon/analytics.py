@@ -498,6 +498,111 @@ def metadata(conn: duckdb.DuckDBPyConnection) -> dict:
     }
 
 
+def token_type_timeseries(
+    conn: duckdb.DuckDBPyConnection,
+    bucket: str = "day",
+    since: str | None = None,
+    limit: int = 365,
+    host: str | None = None,
+    timezone: str | None = "America/Los_Angeles",
+) -> list[tuple]:
+    """Token volume over time split by token kind."""
+    if bucket not in {"hour", "day", "week", "month"}:
+        raise ValueError(f"unknown bucket: {bucket}")
+    limit = max(1, min(int(limit), 2000))
+    where, params = _build_filter(since, host)
+    local_ts = _local_ts_expr(timezone)
+    bucket_expr = f"date_trunc('{bucket}', {local_ts})"
+    return conn.execute(
+        f"""
+        WITH rollup AS (
+            SELECT
+                {bucket_expr} AS bucket,
+                SUM(input_tokens) AS input_tokens,
+                SUM(output_tokens) AS output_tokens,
+                SUM(cache_write_5m + cache_write_1h) AS cache_write_tokens,
+                SUM(cache_read) AS cache_read_tokens
+            FROM v_turn_cost
+            {where}
+            GROUP BY bucket
+        ),
+        recent AS (
+            SELECT *
+            FROM rollup
+            WHERE bucket IN (
+                SELECT bucket FROM rollup ORDER BY bucket DESC LIMIT {limit}
+            )
+        )
+        SELECT bucket, series, tokens
+        FROM recent
+        UNPIVOT(tokens FOR series IN (
+            input_tokens,
+            output_tokens,
+            cache_write_tokens,
+            cache_read_tokens
+        ))
+        ORDER BY bucket ASC, series
+        """,
+        params,
+    ).fetchall()
+
+
+def token_stats(
+    conn: duckdb.DuckDBPyConnection,
+    since: str | None = None,
+    host: str | None = None,
+) -> dict:
+    """Token summary stats and useful derived ratios."""
+    where, params = _build_filter(since, host)
+    row = conn.execute(
+        f"""
+        SELECT
+            COUNT(*) AS turns,
+            COUNT(DISTINCT session_id) AS sessions,
+            COALESCE(SUM(input_tokens), 0) AS input_tokens,
+            COALESCE(SUM(output_tokens), 0) AS output_tokens,
+            COALESCE(SUM(cache_write_5m + cache_write_1h), 0) AS cache_write_tokens,
+            COALESCE(SUM(cache_read), 0) AS cache_read_tokens,
+            COALESCE(SUM(input_tokens + output_tokens + cache_write_5m + cache_write_1h + cache_read), 0) AS total_tokens,
+            COALESCE(SUM(total_usd), 0) AS total_usd,
+            COALESCE(MAX(input_tokens + output_tokens + cache_write_5m + cache_write_1h + cache_read), 0) AS biggest_turn_tokens,
+            COALESCE(AVG(input_tokens + output_tokens + cache_write_5m + cache_write_1h + cache_read), 0) AS avg_turn_tokens
+        FROM v_turn_cost
+        {where}
+        """,
+        params,
+    ).fetchone()
+    keys = [
+        "turns", "sessions", "input_tokens", "output_tokens",
+        "cache_write_tokens", "cache_read_tokens", "total_tokens", "total_usd",
+        "biggest_turn_tokens", "avg_turn_tokens",
+    ]
+    out = dict(zip(keys, row))
+    for key in keys:
+        out[key] = float(out[key]) if key in {"total_usd", "avg_turn_tokens"} else int(out[key])
+    total = out["total_tokens"]
+    fresh = out["input_tokens"] + out["output_tokens"] + out["cache_write_tokens"]
+    out["fresh_tokens"] = fresh
+    out["cache_share_pct"] = 100.0 * out["cache_read_tokens"] / total if total else 0.0
+    out["output_input_ratio"] = (
+        out["output_tokens"] / out["input_tokens"] if out["input_tokens"] else 0.0
+    )
+    out["tokens_per_dollar"] = total / out["total_usd"] if out["total_usd"] else 0.0
+    # Rough text equivalences: English averages about 0.75 words/token.
+    words = total * 0.75
+    out["estimated_words"] = int(words)
+    out["estimated_pages"] = int(words / 500)
+    out["estimated_books"] = round(words / 90_000, 2)
+    out["estimated_reading_hours"] = round(words / 250 / 60, 1)
+    # Deliberately rough and visible in UI: 0.3 Wh per 1k tokens as a toy estimate.
+    kwh = total * 0.0000003
+    out["estimated_kwh"] = kwh
+    out["phone_charges"] = round(kwh / 0.012, 1)
+    out["led_bulb_hours"] = round(kwh / 0.01, 1)
+    out["co2e_grams"] = round(kwh * 380, 1)
+    return out
+
+
 def top_turns(
     conn: duckdb.DuckDBPyConnection,
     metric: str = "cost",

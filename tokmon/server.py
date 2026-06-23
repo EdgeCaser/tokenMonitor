@@ -293,6 +293,42 @@ def api_meta():
     return A.metadata(conn)
 
 
+@app.get("/api/token_timeseries")
+def api_token_timeseries(
+    bucket: str = Query("day"),
+    since: str = Query("all"),
+    limit: int = Query(365),
+    host: str | None = Query(None),
+    timezone: str = Query("America/Los_Angeles"),
+):
+    conn = _conn()
+    try:
+        rows = A.token_type_timeseries(
+            conn,
+            bucket=bucket,
+            since=since,
+            limit=limit,
+            host=host,
+            timezone=timezone,
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return [
+        {
+            "bucket": b.isoformat() if hasattr(b, "isoformat") else str(b),
+            "series": s.replace("_tokens", "").replace("_", " "),
+            "tokens": int(t or 0),
+        }
+        for b, s, t in rows
+    ]
+
+
+@app.get("/api/token_stats")
+def api_token_stats(since: str = Query("all"), host: str | None = Query(None)):
+    conn = _conn()
+    return A.token_stats(conn, since=since, host=host)
+
+
 @app.get("/api/quota")
 def api_quota(metric: str = Query("usd"), host: str | None = Query(None)):
     if metric not in ("usd", "tokens"):

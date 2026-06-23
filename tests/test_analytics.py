@@ -166,6 +166,30 @@ def test_metadata_reports_latest_turn(loaded):
     assert meta["latest_turn_ts"] is not None
 
 
+def test_token_type_timeseries_splits_token_kinds(loaded):
+    rows = A.token_type_timeseries(
+        loaded,
+        bucket="hour",
+        timezone="America/Los_Angeles",
+    )
+    series = {r[1] for r in rows}
+    assert {
+        "input_tokens",
+        "output_tokens",
+        "cache_write_tokens",
+        "cache_read_tokens",
+    }.issubset(series)
+    assert sum(int(r[2]) for r in rows) == A.summary(loaded)["input_tokens"] + A.summary(loaded)["output_tokens"] + A.summary(loaded)["cache_write_5m"] + A.summary(loaded)["cache_write_1h"] + A.summary(loaded)["cache_read"]
+
+
+def test_token_stats_returns_equivalences(loaded):
+    stats = A.token_stats(loaded)
+    assert stats["total_tokens"] > 0
+    assert stats["fresh_tokens"] > 0
+    assert stats["estimated_words"] > 0
+    assert "phone_charges" in stats
+
+
 def test_parse_since():
     assert A.parse_since("all") is None
     assert A.parse_since(None) is None
