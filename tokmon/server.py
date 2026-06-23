@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextvars
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Query
@@ -12,6 +13,36 @@ from . import analytics as A
 
 app = FastAPI(title="tokmon", version="0.1.0")
 
+# Per-request DuckDB connections, closed by the middleware below. DuckDB only
+# allows a writer when no other process holds the file open, so the server must
+# release every read-only connection promptly — otherwise the 10-minute ingest
+# can never acquire the write lock and new data stops appearing.
+_request_conns: contextvars.ContextVar[list] = contextvars.ContextVar("_request_conns")
+
+
+def _conn():
+    """Open a read-only analytics connection, tracked for close after the request."""
+    conn = A.connect_with_views(read_only=True)
+    try:
+        _request_conns.get().append(conn)
+    except LookupError:
+        pass  # opened outside a request (tests/CLI) — caller owns close
+    return conn
+
+
+@app.middleware("http")
+async def _close_request_conns(request, call_next):
+    token = _request_conns.set([])
+    try:
+        return await call_next(request)
+    finally:
+        for conn in _request_conns.get():
+            try:
+                conn.close()
+            except Exception:  # noqa: BLE001 — best-effort cleanup
+                pass
+        _request_conns.reset(token)
+
 
 def _rows_to_dicts(rows, keys):
     return [dict(zip(keys, r)) for r in rows]
@@ -19,7 +50,7 @@ def _rows_to_dicts(rows, keys):
 
 @app.get("/api/summary")
 def api_summary(since: str = Query("all"), host: str | None = Query(None)):
-    conn = A.connect_with_views(read_only=True)
+    conn = _conn()
     return A.summary(conn, since=since, host=host)
 
 
@@ -30,7 +61,7 @@ def api_spend(
     limit: int = Query(50),
     host: str | None = Query(None),
 ):
-    conn = A.connect_with_views(read_only=True)
+    conn = _conn()
     rows = A.spend_by(conn, by, since=since, limit=limit, host=host)
     keymap = {
         "project":       ["project_label", "project_path", "turns", "tokens", "usd"],
@@ -56,7 +87,7 @@ def api_spend(
 @app.get("/api/top")
 def api_top(metric: str = "cost", n: int = 20, since: str = "all",
             host: str | None = Query(None)):
-    conn = A.connect_with_views(read_only=True)
+    conn = _conn()
     rows = A.top_turns(conn, metric=metric, n=n, since=since, host=host)
     keys = ["uuid", "ts", "project", "session_id", "model",
             "input_tokens", "output_tokens", "cache_write", "cache_read", "total_usd"]
@@ -68,7 +99,7 @@ def api_top(metric: str = "cost", n: int = 20, since: str = "all",
 
 @app.get("/api/projects/{name_or_path}")
 def api_project(name_or_path: str):
-    conn = A.connect_with_views(read_only=True)
+    conn = _conn()
     data = A.project_drilldown(conn, name_or_path)
     if not data:
         raise HTTPException(404, "no such project")
@@ -90,7 +121,7 @@ def api_project(name_or_path: str):
 
 @app.get("/api/sessions/{session_id}")
 def api_session(session_id: str):
-    conn = A.connect_with_views(read_only=True)
+    conn = _conn()
     rows = A.session_trace(conn, session_id)
     if not rows:
         raise HTTPException(404, "no such session")
@@ -104,7 +135,7 @@ def api_session(session_id: str):
 
 @app.get("/api/cache")
 def api_cache(host: str | None = Query(None)):
-    conn = A.connect_with_views(read_only=True)
+    conn = _conn()
     rows = A.cache_efficiency(conn, host=host)
     return _rows_to_dicts(rows,
                           ["model", "cache_read", "cache_write",
@@ -113,14 +144,14 @@ def api_cache(host: str | None = Query(None)):
 
 @app.get("/api/calendar")
 def api_calendar(days_back: int = 365, host: str | None = Query(None)):
-    conn = A.connect_with_views(read_only=True)
+    conn = _conn()
     rows = A.calendar_heatmap(conn, days_back=days_back, host=host)
     return [{"day": str(d), "usd": float(u), "turns": int(t)} for d, u, t in rows]
 
 
 @app.get("/api/heatmap")
 def api_heatmap(since: str = "all", host: str | None = Query(None)):
-    conn = A.connect_with_views(read_only=True)
+    conn = _conn()
     rows = A.hour_dow_heatmap(conn, since=since, host=host)
     return [{"dow": int(d), "hour": int(h), "turns": int(t), "usd": float(u or 0)}
             for d, h, t, u in rows]
@@ -128,19 +159,19 @@ def api_heatmap(since: str = "all", host: str | None = Query(None)):
 
 @app.get("/api/cache_savings")
 def api_cache_savings(since: str = "all", host: str | None = Query(None)):
-    conn = A.connect_with_views(read_only=True)
+    conn = _conn()
     return A.cache_savings(conn, since=since, host=host)
 
 
 @app.get("/api/burn_rate")
 def api_burn_rate(window_minutes: int = 60, host: str | None = Query(None)):
-    conn = A.connect_with_views(read_only=True)
+    conn = _conn()
     return A.burn_rate(conn, window_minutes=window_minutes, host=host)
 
 
 @app.get("/api/tool_costs")
 def api_tool_costs(since: str = "all", host: str | None = Query(None)):
-    conn = A.connect_with_views(read_only=True)
+    conn = _conn()
     rows = A.tool_cost_attribution(conn, since=since, host=host)
     return [{"tool_name": t, "turns_using": int(tu), "total_calls": int(c),
              "avg_turn_usd": float(a), "total_turn_usd": float(s)}
@@ -149,19 +180,19 @@ def api_tool_costs(since: str = "all", host: str | None = Query(None)):
 
 @app.get("/api/outliers")
 def api_outliers(z_threshold: float = 2.0, host: str | None = Query(None)):
-    conn = A.connect_with_views(read_only=True)
+    conn = _conn()
     return A.outlier_sessions(conn, z_threshold=z_threshold, host=host)
 
 
 @app.get("/api/forecast")
 def api_forecast(host: str | None = Query(None)):
-    conn = A.connect_with_views(read_only=True)
+    conn = _conn()
     return A.monthly_forecast(conn, host=host)
 
 
 @app.get("/api/branches")
 def api_branches(since: str = "all", host: str | None = Query(None), limit: int = 50):
-    conn = A.connect_with_views(read_only=True)
+    conn = _conn()
     rows = A.branch_spend(conn, since=since, host=host, limit=limit)
     return [{"project": p, "branch": b, "turns": int(t),
              "sessions": int(s), "usd": float(u)}
@@ -178,7 +209,7 @@ def api_turns(
     since: str = Query("all"),
     limit: int = Query(100),
 ):
-    conn = A.connect_with_views(read_only=True)
+    conn = _conn()
     rows = A.turn_explorer(conn, model=model, project=project, host=host,
                            tool=tool, min_usd=min_usd, since=since, limit=limit)
     keys = ["uuid", "ts", "host", "project", "session_id", "model",
@@ -196,7 +227,7 @@ def api_turns(
 
 @app.get("/api/turns/{turn_uuid}")
 def api_turn_detail(turn_uuid: str):
-    conn = A.connect_with_views(read_only=True)
+    conn = _conn()
     detail = A.turn_detail(conn, turn_uuid)
     if not detail:
         raise HTTPException(404, "turn not found")
@@ -205,14 +236,14 @@ def api_turn_detail(turn_uuid: str):
 
 @app.get("/api/achievements")
 def api_achievements(host: str | None = Query(None)):
-    conn = A.connect_with_views(read_only=True)
+    conn = _conn()
     return A.achievements(conn, host=host)
 
 
 @app.get("/api/timeseries")
 def api_timeseries(bucket: str = "day", since: str = "all",
                    host: str | None = Query(None)):
-    conn = A.connect_with_views(read_only=True)
+    conn = _conn()
     rows = A.timeseries(conn, bucket=bucket, since=since, host=host)
     out = []
     for b, m, t, u in rows:
@@ -224,7 +255,7 @@ def api_timeseries(bucket: str = "day", since: str = "all",
 def api_quota(metric: str = Query("usd"), host: str | None = Query(None)):
     if metric not in ("usd", "tokens"):
         raise HTTPException(400, "metric must be 'usd' or 'tokens'")
-    conn = A.connect_with_views(read_only=True)
+    conn = _conn()
     return A.quota_inference(conn, metric=metric, host=host)
 
 

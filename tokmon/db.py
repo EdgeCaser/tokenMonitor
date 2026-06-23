@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import socket
+import time
 
 import duckdb
 from pathlib import Path
@@ -148,7 +149,18 @@ def connect(
         boot.execute(SCHEMA_SQL)
         _migrate_add_host_column(boot)
         boot.close()
-    conn = duckdb.connect(str(path), read_only=read_only)
+    # Writers need exclusive access. If the dashboard server momentarily holds
+    # the file open during a request, retry briefly instead of failing the whole
+    # ingest run — the server releases its read-only connection per request.
+    attempts = 1 if read_only else 5
+    for attempt in range(attempts):
+        try:
+            conn = duckdb.connect(str(path), read_only=read_only)
+            break
+        except (duckdb.IOException, IOError):
+            if attempt == attempts - 1:
+                raise
+            time.sleep(1.5)
     # Constrain on low-memory hosts (Pi has 6 GiB; DuckDB grabs it all by
     # default). Set DUCKDB_MEMORY_LIMIT / DUCKDB_THREADS in the systemd unit.
     mem = os.environ.get("DUCKDB_MEMORY_LIMIT")
