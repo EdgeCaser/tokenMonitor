@@ -149,10 +149,16 @@ def connect(
         boot.execute(SCHEMA_SQL)
         _migrate_add_host_column(boot)
         boot.close()
-    # Writers need exclusive access. If the dashboard server momentarily holds
-    # the file open during a request, retry briefly instead of failing the whole
-    # ingest run — the server releases its read-only connection per request.
-    attempts = 1 if read_only else 5
+    # DuckDB allows only one open connection to a file across processes: while
+    # the writer (ingest) holds it, readers are refused, and vice versa. Both
+    # sides retry briefly to ride over the other's short-lived connection.
+    # Writers (ingest, background) wait longer; readers (dashboard requests)
+    # use a short backoff so the UI rides over the ~1-2s ingest write window
+    # without hanging, instead of surfacing a transient lock as a 500.
+    if read_only:
+        attempts, backoff = 5, 0.4
+    else:
+        attempts, backoff = 5, 1.5
     for attempt in range(attempts):
         try:
             conn = duckdb.connect(str(path), read_only=read_only)
@@ -160,7 +166,7 @@ def connect(
         except (duckdb.IOException, IOError):
             if attempt == attempts - 1:
                 raise
-            time.sleep(1.5)
+            time.sleep(backoff)
     # Constrain on low-memory hosts (Pi has 6 GiB; DuckDB grabs it all by
     # default). Set DUCKDB_MEMORY_LIMIT / DUCKDB_THREADS in the systemd unit.
     mem = os.environ.get("DUCKDB_MEMORY_LIMIT")
