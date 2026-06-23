@@ -48,15 +48,28 @@
     font-weight: normal;
   }
   .subhead { font-size: 11px; color: rgb(100, 116, 139); margin-top: 4px; }
+  .fit-card-value {
+    display: block;
+    max-width: 100%;
+    white-space: nowrap;
+    overflow: hidden;
+    line-height: 1.1;
+  }
 </style>
 </head>
 <body class="bg-slate-50 text-slate-900">
 
 <div class="max-w-7xl mx-auto p-6 space-y-6">
 
-  <header class="flex items-center justify-between">
-    <h1 class="text-2xl font-bold">tokmon</h1>
-    <div class="flex items-center gap-3">
+  <header class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+    <div>
+      <h1 class="text-2xl font-bold">tokmon</h1>
+      <div class="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-500">
+        <span id="tz-label">chart timezone: America/Los_Angeles</span>
+        <span id="last-updated">last updated: —</span>
+      </div>
+    </div>
+    <div class="flex flex-wrap items-center gap-3">
       <label class="text-sm text-slate-600">host</label>
       <select id="host" class="border rounded px-2 py-1 text-sm bg-white">
         <option value="">all hosts</option>
@@ -84,6 +97,7 @@
     <button class="tab px-4 py-2 rounded-t text-sm font-medium" data-tab="branches">Branches</button>
     <button class="tab px-4 py-2 rounded-t text-sm font-medium" data-tab="turns">Turns</button>
     <button class="tab px-4 py-2 rounded-t text-sm font-medium" data-tab="spend">Spend</button>
+    <button class="tab px-4 py-2 rounded-t text-sm font-medium" data-tab="analytics">Analytics</button>
     <button class="tab px-4 py-2 rounded-t text-sm font-medium" data-tab="quotas">Quotas</button>
   </nav>
 
@@ -416,19 +430,73 @@
 
   <!-- SPEND -->
   <section data-pane="spend" class="hidden bg-white rounded shadow p-4">
-    <div class="flex items-center gap-3 mb-3">
-      <label class="text-sm text-slate-600">group by</label>
-      <select id="spend-by" class="border rounded px-2 py-1 text-sm bg-white">
-        <option value="day">day</option>
-        <option value="hour">hour</option>
-        <option value="model">model</option>
-        <option value="project">project</option>
-      </select>
+    <div class="flex flex-wrap items-center justify-between gap-3 mb-3">
+      <div class="flex flex-wrap items-center gap-3">
+        <label class="text-sm text-slate-600">bucket</label>
+        <select id="spend-bucket" class="border rounded px-2 py-1 text-sm bg-white">
+          <option value="day">day</option>
+          <option value="hour">hour</option>
+          <option value="week">week</option>
+          <option value="month">month</option>
+        </select>
+        <label class="text-sm text-slate-600">stack</label>
+        <select id="spend-stack" class="border rounded px-2 py-1 text-sm bg-white">
+          <option value="none">none</option>
+          <option value="host" selected>host</option>
+          <option value="project">project</option>
+          <option value="host_project">host + project</option>
+        </select>
+      </div>
+      <div class="flex items-center gap-1">
+        <button id="spend-pan-left" class="border rounded px-2 py-1 text-sm bg-white" title="earlier">←</button>
+        <button id="spend-zoom-out" class="border rounded px-2 py-1 text-sm bg-white" title="zoom out">−</button>
+        <button id="spend-zoom-reset" class="border rounded px-2 py-1 text-sm bg-white" title="reset zoom">reset</button>
+        <button id="spend-zoom-in" class="border rounded px-2 py-1 text-sm bg-white" title="zoom in">+</button>
+        <button id="spend-pan-right" class="border rounded px-2 py-1 text-sm bg-white" title="later">→</button>
+      </div>
     </div>
+    <div id="spend-zoom-label" class="text-xs text-slate-500 mb-2">—</div>
     <div class="overflow-x-auto" style="height: 300px;">
       <div id="chart-spend-wrap" style="min-width: 100%; height: 100%;">
         <canvas id="chart-spend"></canvas>
       </div>
+    </div>
+  </section>
+
+  <!-- ANALYTICS -->
+  <section data-pane="analytics" class="hidden space-y-4">
+    <div class="grid grid-cols-3 gap-4" id="analytics-cards"></div>
+
+    <div class="grid grid-cols-2 gap-4">
+      <div class="bg-white rounded shadow p-4">
+        <h2 class="font-semibold mb-1">Cumulative spend velocity</h2>
+        <div class="subhead mb-3">Running total with recent slope. Good for seeing when usage changed gears.</div>
+        <div style="height: 260px;"><canvas id="chart-analytics-cumulative"></canvas></div>
+      </div>
+      <div class="bg-white rounded shadow p-4">
+        <h2 class="font-semibold mb-1">Model mix over time</h2>
+        <div class="subhead mb-3">Stacked daily spend by model. Detects accidental Opus days fast.</div>
+        <div style="height: 260px;"><canvas id="chart-analytics-models"></canvas></div>
+      </div>
+    </div>
+
+    <div class="grid grid-cols-2 gap-4">
+      <div class="bg-white rounded shadow p-4">
+        <h2 class="font-semibold mb-1">Host duel</h2>
+        <div class="subhead mb-3">Daily spend stacked by machine.</div>
+        <div style="height: 260px;"><canvas id="chart-analytics-hosts"></canvas></div>
+      </div>
+      <div class="bg-white rounded shadow p-4">
+        <h2 class="font-semibold mb-1">Circadian cost profile</h2>
+        <div class="subhead mb-3">Spend by Pacific hour of day, across the selected range.</div>
+        <div style="height: 260px;"><canvas id="chart-analytics-hour"></canvas></div>
+      </div>
+    </div>
+
+    <div class="bg-white rounded shadow p-4">
+      <h2 class="font-semibold mb-1">Project constellation</h2>
+      <div class="subhead mb-3">Bubble size = spend, x = turns, y = average $/turn. Farther right/up means expensive and frequent.</div>
+      <div style="height: 320px;"><canvas id="chart-analytics-projects"></canvas></div>
     </div>
   </section>
 
@@ -501,8 +569,16 @@
 const fmtInt = (n) => (n == null ? "—" : Number(n).toLocaleString());
 const fmtUsd = (x) => (x == null ? "—" : "$" + Number(x).toFixed(x < 0.01 ? 4 : 2));
 const $ = (s) => document.querySelector(s);
+const CHART_TZ = "America/Los_Angeles";
+const browserTz = Intl.DateTimeFormat().resolvedOptions().timeZone || "local";
+const PALETTE = [
+  "rgb(37,99,235)", "rgb(16,185,129)", "rgb(245,158,11)", "rgb(220,38,38)",
+  "rgb(124,58,237)", "rgb(8,145,178)", "rgb(202,138,4)", "rgb(219,39,119)",
+  "rgb(71,85,105)", "rgb(22,163,74)", "rgb(234,88,12)", "rgb(79,70,229)",
+];
 
 let charts = {};
+let spendZoom = { start: 0, end: null };
 function destroyChart(name) {
   if (charts[name]) { charts[name].destroy(); delete charts[name]; }
 }
@@ -522,8 +598,14 @@ function setActive(name) {
 document.querySelectorAll(".tab").forEach(b => b.addEventListener("click", () => setActive(b.dataset.tab)));
 $("#since").addEventListener("change", () => load(currentTab()));
 $("#host").addEventListener("change", () => load(currentTab()));
-$("#spend-by").addEventListener("change", () => load("spend"));
+$("#spend-bucket").addEventListener("change", () => { spendZoom = { start: 0, end: null }; load("spend"); });
+$("#spend-stack").addEventListener("change", () => { spendZoom = { start: 0, end: null }; load("spend"); });
 $("#q-metric").addEventListener("change", () => load("quotas"));
+$("#spend-zoom-in").addEventListener("click", () => adjustSpendZoom(0.65));
+$("#spend-zoom-out").addEventListener("click", () => adjustSpendZoom(1.55));
+$("#spend-zoom-reset").addEventListener("click", () => { spendZoom = { start: 0, end: null }; applySpendZoom(); });
+$("#spend-pan-left").addEventListener("click", () => panSpend(-1));
+$("#spend-pan-right").addEventListener("click", () => panSpend(1));
 
 function currentTab() {
   return document.querySelector(".tab.active").dataset.tab;
@@ -531,6 +613,42 @@ function currentTab() {
 const since = () => $("#since").value;
 const host  = () => $("#host").value;
 const hostQ = () => host() ? `&host=${encodeURIComponent(host())}` : "";
+
+function tzQ() {
+  return `&timezone=${encodeURIComponent(CHART_TZ)}`;
+}
+
+function setTimezoneLabel() {
+  const extra = browserTz && browserTz !== CHART_TZ ? `; your browser: ${browserTz}` : "";
+  $("#tz-label").textContent = `chart timezone: Pacific Time (${CHART_TZ}${extra})`;
+}
+
+function parseAsUtc(s) {
+  if (!s) return null;
+  return new Date(s.endsWith("Z") ? s : s + "Z");
+}
+
+function fmtDateTime(s) {
+  const d = parseAsUtc(s);
+  if (!d || Number.isNaN(d.getTime())) return "—";
+  return d.toLocaleString("en-US", {
+    timeZone: CHART_TZ,
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
+async function loadMeta() {
+  try {
+    const m = await api("/api/meta");
+    const stamp = m.last_ingested_at || m.latest_turn_ts;
+    $("#last-updated").textContent = `last updated: ${fmtDateTime(stamp)} PT`;
+  } catch (e) {
+    $("#last-updated").textContent = "last updated: —";
+  }
+}
 
 // Pick the right time bucket for the overview chart based on the since window.
 // 1h, 6h, 24h, 7d → hour bucket (with horizontal scroll for longer ranges)
@@ -585,7 +703,131 @@ async function load(tab) {
   if (tab === "branches")   await loadBranches();
   if (tab === "turns")      await loadTurns();
   if (tab === "spend")      await loadSpend();
+  if (tab === "analytics")  await loadAnalytics();
   if (tab === "quotas")     await loadQuotas();
+}
+
+function colorFor(i, alpha = 1) {
+  const c = PALETTE[i % PALETTE.length];
+  return alpha === 1 ? c : c.replace("rgb(", "rgba(").replace(")", `,${alpha})`);
+}
+
+function pivotSeries(rows) {
+  const labels = [...new Set(rows.map(r => r.bucket))];
+  const series = [...new Set(rows.map(r => r.series || "total"))];
+  const byKey = new Map(rows.map(r => [`${r.bucket}\u0000${r.series || "total"}`, r]));
+  const datasets = series.map((name, i) => ({
+    label: name,
+    data: labels.map(b => byKey.get(`${b}\u0000${name}`)?.usd || 0),
+    backgroundColor: colorFor(i, 0.58),
+    borderColor: colorFor(i),
+    borderWidth: 1.5,
+    fill: rows.some(r => r.series !== "total"),
+    tension: 0.2,
+  }));
+  return { labels: labels.map(fmtBucketLabel), rawLabels: labels, datasets };
+}
+
+function renderTimeSeriesChart(name, canvas, rows, { stacked = false, type = "bar", legend = true } = {}) {
+  destroyChart(name);
+  const { labels, datasets } = pivotSeries(rows);
+  charts[name] = new Chart(canvas, {
+    type,
+    data: { labels, datasets },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: "index", intersect: false },
+      plugins: {
+        legend: { display: legend, position: "bottom" },
+        tooltip: { callbacks: { label: (c) => `${c.dataset.label}: ${fmtUsd(c.parsed.y)}` } },
+      },
+      scales: {
+        x: { stacked, ticks: { maxRotation: 60, autoSkip: true, maxTicksLimit: 48 } },
+        y: { stacked, ticks: { callback: (v) => "$" + v } },
+      },
+    },
+  });
+  return charts[name];
+}
+
+function fitSingleLineText(selector = ".fit-card-value") {
+  requestAnimationFrame(() => {
+    document.querySelectorAll(selector).forEach(el => {
+      el.style.fontSize = "";
+      let size = parseFloat(getComputedStyle(el).fontSize);
+      while (size > 11 && el.scrollWidth > el.clientWidth) {
+        size -= 1;
+        el.style.fontSize = size + "px";
+      }
+    });
+  });
+}
+
+async function spendSeries(bucket, stack, { limit = 365, seriesLimit = 12 } = {}) {
+  try {
+    return await api(`/api/spend_timeseries?bucket=${bucket}&stack=${stack}&since=${since()}&limit=${limit}&series_limit=${seriesLimit}${hostQ()}${tzQ()}`);
+  } catch (e) {
+    if (stack !== "none" || !["hour", "day"].includes(bucket)) throw e;
+    const rows = await api(`/api/spend?by=${bucket}&since=${since()}&limit=${limit}${hostQ()}`);
+    rows.reverse();
+    return rows.map(r => ({
+      bucket: r[bucket],
+      series: "total",
+      turns: r.turns,
+      tokens: r.tokens,
+      usd: r.usd,
+    }));
+  }
+}
+
+function applySpendZoom() {
+  const c = charts.spend;
+  if (!c) return;
+  const n = c.data.labels.length;
+  if (!n) return;
+  const fullEnd = n - 1;
+  if (spendZoom.end == null) spendZoom = { start: 0, end: fullEnd };
+  spendZoom.start = Math.max(0, Math.min(spendZoom.start, fullEnd));
+  spendZoom.end = Math.max(spendZoom.start, Math.min(spendZoom.end, fullEnd));
+  c.options.scales.x.min = spendZoom.start;
+  c.options.scales.x.max = spendZoom.end;
+  c.update();
+  $("#spend-zoom-label").textContent =
+    `${fmtInt(spendZoom.end - spendZoom.start + 1)} of ${fmtInt(n)} buckets visible`;
+}
+
+function adjustSpendZoom(factor) {
+  const c = charts.spend;
+  if (!c) return;
+  const n = c.data.labels.length;
+  if (spendZoom.end == null) spendZoom = { start: 0, end: n - 1 };
+  const current = spendZoom.end - spendZoom.start + 1;
+  const next = Math.max(4, Math.min(n, Math.round(current * factor)));
+  const mid = (spendZoom.start + spendZoom.end) / 2;
+  spendZoom.start = Math.round(mid - next / 2);
+  spendZoom.end = spendZoom.start + next - 1;
+  applySpendZoom();
+}
+
+function panSpend(dir) {
+  const c = charts.spend;
+  if (!c) return;
+  const n = c.data.labels.length;
+  if (spendZoom.end == null) spendZoom = { start: 0, end: n - 1 };
+  const width = spendZoom.end - spendZoom.start + 1;
+  const shift = Math.max(1, Math.round(width * 0.35)) * dir;
+  spendZoom.start += shift;
+  spendZoom.end += shift;
+  if (spendZoom.start < 0) {
+    spendZoom.start = 0;
+    spendZoom.end = Math.min(n - 1, width - 1);
+  }
+  if (spendZoom.end > n - 1) {
+    spendZoom.end = n - 1;
+    spendZoom.start = Math.max(0, n - width);
+  }
+  applySpendZoom();
 }
 
 // Wire turn-explorer filter button + close
@@ -787,34 +1029,26 @@ async function loadOverview() {
   }).catch(() => {});
 
   const bucket = autoBucket();
-  const rows = await api(`/api/spend?by=${bucket}&since=${since()}&limit=${autoBucketLimit()}${hostQ()}`);
-  rows.reverse();
-  const labels = rows.map(r => fmtBucketLabel(r[bucket]));
-  destroyChart("daily");
-  fitChartWidth($("#chart-daily-wrap"), labels.length);
-  charts.daily = new Chart($("#chart-daily"), {
+  const rows = await spendSeries(bucket, "host", { limit: autoBucketLimit(), seriesLimit: 12 });
+  const nBuckets = new Set(rows.map(r => r.bucket)).size;
+  fitChartWidth($("#chart-daily-wrap"), nBuckets);
+  renderTimeSeriesChart("daily", $("#chart-daily"), rows, {
     type: "line",
-    data: {
-      labels: labels,
-      datasets: [{ label: "$ spend",
-                   data: rows.map(r => r.usd),
-                   borderColor: "rgb(16,185,129)",
-                   backgroundColor: "rgba(16,185,129,0.15)",
-                   fill: true, tension: 0.2 }],
-    },
-    options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      plugins: { legend: { display: false } },
-      scales: { x: { ticks: { maxRotation: 60, minRotation: 0, autoSkip: true, maxTicksLimit: 48 } } },
-    },
+    stacked: true,
+    legend: true,
   });
+  charts.daily.data.datasets.forEach((ds, i) => {
+    ds.fill = i === 0 ? "origin" : "-1";
+    ds.tension = 0.25;
+    ds.pointRadius = 1.5;
+  });
+  charts.daily.update();
   // Update the chart heading (target the line-chart h2 specifically, not the
   // first h2 in Overview which is now the Forecast card).
   const chartHeading = document.getElementById("chart-daily-heading");
   if (chartHeading) {
     const label = bucket === "hour" ? "Hourly spend" : "Daily spend";
-    chartHeading.firstChild.textContent = label + " ";
+    chartHeading.firstChild.textContent = label + " by host ";
   }
 
   const projs = await api(`/api/spend?by=project&since=${since()}&limit=10${hostQ()}`);
@@ -1035,36 +1269,161 @@ async function loadCache() {
 }
 
 async function loadSpend() {
-  const by = $("#spend-by").value;
-  const limit = by === "hour" ? 720 : 200;
-  const rows = await api(`/api/spend?by=${by}&since=${since()}&limit=${limit}${hostQ()}`);
-  if (by === "hour" || by === "day") rows.reverse();  // chronological for charts
-  const label = by === "day"
-                  ? rows.map(r => r.day)
-                  : by === "hour"
-                    ? rows.map(r => fmtBucketLabel(r.hour))
-                    : by === "model"
-                      ? rows.map(r => r.model)
-                      : rows.map(r => r.project_label);
-  destroyChart("spend");
-  fitChartWidth($("#chart-spend-wrap"), label.length);
-  charts.spend = new Chart($("#chart-spend"), {
-    type: (by === "day" || by === "hour") ? "line" : "bar",
+  const bucket = $("#spend-bucket").value;
+  const stack = $("#spend-stack").value;
+  const limit = bucket === "hour" ? 1000 : bucket === "day" ? 730 : 260;
+  const rows = await spendSeries(bucket, stack, { limit, seriesLimit: 14 });
+  const nBuckets = new Set(rows.map(r => r.bucket)).size;
+  fitChartWidth($("#chart-spend-wrap"), nBuckets);
+  renderTimeSeriesChart("spend", $("#chart-spend"), rows, {
+    type: "line",
+    stacked: stack !== "none",
+    legend: stack !== "none",
+  });
+  if (stack === "none" && charts.spend.data.datasets[0]) {
+    charts.spend.data.datasets[0].backgroundColor = "rgba(99,102,241,0.16)";
+    charts.spend.data.datasets[0].borderColor = "rgb(99,102,241)";
+    charts.spend.data.datasets[0].fill = true;
+    charts.spend.update();
+  }
+  if (stack !== "none") {
+    charts.spend.data.datasets.forEach((ds, i) => {
+      ds.fill = i === 0 ? "origin" : "-1";
+      ds.tension = 0.25;
+      ds.pointRadius = 1.5;
+    });
+    charts.spend.update();
+  }
+  applySpendZoom();
+}
+
+function sumUsd(rows) {
+  return rows.reduce((a, r) => a + Number(r.usd || 0), 0);
+}
+
+function insightCard(title, value, detail, accent = "border-slate-200") {
+  return `<div class="bg-white rounded shadow p-4 border ${accent}">
+    <div class="text-xs uppercase text-slate-500">${title}</div>
+    <div class="num text-2xl font-bold mt-1 fit-card-value" title="${String(value).replaceAll('"', '&quot;')}">${value}</div>
+    <div class="text-xs text-slate-500 mt-1">${detail}</div>
+  </div>`;
+}
+
+async function loadAnalytics() {
+  const [daily, models, hosts, hourly, projects, outliers] = await Promise.all([
+    spendSeries("day", "none", { limit: 730 }),
+    api(`/api/spend_timeseries?bucket=day&stack=model&since=${since()}&limit=180&series_limit=8${hostQ()}${tzQ()}`),
+    api(`/api/spend_timeseries?bucket=day&stack=host&since=${since()}&limit=180&series_limit=10${hostQ()}${tzQ()}`),
+    api(`/api/spend_timeseries?bucket=hour&stack=none&since=${since()}&limit=1000${hostQ()}${tzQ()}`),
+    api(`/api/spend?by=project&since=${since()}&limit=60${hostQ()}`),
+    api(`/api/outliers${hostQ() ? "?" + hostQ().slice(1) : ""}`).catch(() => []),
+  ]);
+
+  const cumulative = [];
+  let running = 0;
+  for (const r of daily) {
+    running += Number(r.usd || 0);
+    cumulative.push({...r, usd: running});
+  }
+  renderTimeSeriesChart("analyticsCumulative", $("#chart-analytics-cumulative"), cumulative, {
+    type: "line",
+    stacked: false,
+    legend: false,
+  });
+  if (charts.analyticsCumulative.data.datasets[0]) {
+    charts.analyticsCumulative.data.datasets[0].borderColor = "rgb(5,150,105)";
+    charts.analyticsCumulative.data.datasets[0].backgroundColor = "rgba(5,150,105,0.12)";
+    charts.analyticsCumulative.data.datasets[0].fill = true;
+    charts.analyticsCumulative.update();
+  }
+
+  renderTimeSeriesChart("analyticsModels", $("#chart-analytics-models"), models, {
+    type: "bar",
+    stacked: true,
+    legend: true,
+  });
+  renderTimeSeriesChart("analyticsHosts", $("#chart-analytics-hosts"), hosts, {
+    type: "bar",
+    stacked: true,
+    legend: true,
+  });
+
+  const byHour = Array.from({length: 24}, (_, h) => ({bucket: String(h).padStart(2, "0") + ":00", series: "spend", usd: 0}));
+  for (const r of hourly) {
+    const h = Number((r.bucket || "T00").slice(11, 13));
+    if (!Number.isNaN(h)) byHour[h].usd += Number(r.usd || 0);
+  }
+  destroyChart("analyticsHour");
+  charts.analyticsHour = new Chart($("#chart-analytics-hour"), {
+    type: "radar",
     data: {
-      labels: label,
-      datasets: [{ label: "$ spend",
-                   data: rows.map(r => r.usd),
-                   backgroundColor: "rgba(99,102,241,0.6)",
-                   borderColor: "rgba(99,102,241,1)",
-                   fill: true, tension: 0.2 }],
+      labels: byHour.map(r => r.bucket),
+      datasets: [{
+        label: "$ spend",
+        data: byHour.map(r => r.usd),
+        borderColor: "rgb(14,165,233)",
+        backgroundColor: "rgba(14,165,233,0.18)",
+        pointRadius: 2,
+      }],
     },
     options: {
       responsive: true,
       maintainAspectRatio: false,
       plugins: { legend: { display: false } },
-      scales: { x: { ticks: { maxRotation: 60, autoSkip: true, maxTicksLimit: 48 } } },
+      scales: { r: { ticks: { display: false } } },
     },
   });
+
+  destroyChart("analyticsProjects");
+  charts.analyticsProjects = new Chart($("#chart-analytics-projects"), {
+    type: "bubble",
+    data: {
+      datasets: projects.slice(0, 30).map((p, i) => ({
+        label: p.project_label,
+        data: [{
+          x: Number(p.turns || 0),
+          y: Number(p.usd || 0) / Math.max(1, Number(p.turns || 0)),
+          r: Math.max(4, Math.min(30, Math.sqrt(Number(p.usd || 0)) * 14)),
+        }],
+        backgroundColor: colorFor(i, 0.45),
+        borderColor: colorFor(i),
+      })),
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: { callbacks: { label: (c) => {
+          const p = projects[c.datasetIndex];
+          return `${p.project_label}: ${fmtInt(p.turns)} turns, ${fmtUsd(p.usd)}, avg ${fmtUsd(p.usd / Math.max(1, p.turns))}/turn`;
+        } } },
+      },
+      scales: {
+        x: { title: { display: true, text: "turns" } },
+        y: { title: { display: true, text: "avg $/turn" }, ticks: { callback: (v) => "$" + Number(v).toFixed(3) } },
+      },
+    },
+  });
+
+  const total = sumUsd(daily);
+  const topProject = projects[0];
+  const peakDay = daily.reduce((best, r) => Number(r.usd || 0) > Number(best?.usd || 0) ? r : best, null);
+  const peakHour = byHour.reduce((best, r) => r.usd > best.usd ? r : best, byHour[0]);
+  const avgDay = daily.length ? total / daily.length : 0;
+  const peakRatio = avgDay > 0 && peakDay ? Number(peakDay.usd || 0) / avgDay : 0;
+  const totalProjectTurns = projects.reduce((a, p) => a + Number(p.turns || 0), 0);
+  const entropyish = totalProjectTurns > 0
+    ? Math.min(100, 100 * projects.length / Math.sqrt(totalProjectTurns)).toFixed(0) + "%"
+    : "—";
+  $("#analytics-cards").innerHTML =
+    insightCard("peak cost day", fmtUsd(peakDay?.usd), `${fmtBucketLabel(peakDay?.bucket)} was ${peakRatio.toFixed(1)}x your selected-range daily average.`, "border-rose-200") +
+    insightCard("dominant project", topProject ? topProject.project_label : "—", topProject ? `${fmtUsd(topProject.usd)} across ${fmtInt(topProject.turns)} turns.` : "No project data.", "border-indigo-200") +
+    insightCard("weirdness index", fmtInt(outliers.length), `${outliers.length ? "Statistical outlier sessions worth investigating." : "No expensive-session outliers detected."}`, "border-amber-200") +
+    insightCard("prime spending hour", peakHour?.bucket || "—", `${fmtUsd(peakHour?.usd)} total spend during that Pacific hour.`, "border-sky-200") +
+    insightCard("project entropy", entropyish, `${fmtInt(projects.length)} active projects in this slice.`, "border-emerald-200") +
+    insightCard("range total", fmtUsd(total), `${fmtInt(daily.length)} chart buckets in Pacific time.`, "border-slate-200");
+  fitSingleLineText();
 }
 
 // === QUOTAS ===
@@ -1181,6 +1540,8 @@ async function loadQuotas() {
   });
 }
 
+setTimezoneLabel();
+loadMeta();
 loadOverview();
 </script>
 </body>

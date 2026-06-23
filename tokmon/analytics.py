@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 from pathlib import Path
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import duckdb
 
@@ -242,6 +243,26 @@ def _build_filter(
     return where, params
 
 
+def _validate_timezone(tz: str | None) -> str:
+    """Return a DuckDB-safe IANA timezone name."""
+    name = tz or "America/Los_Angeles"
+    try:
+        ZoneInfo(name)
+    except ZoneInfoNotFoundError as exc:
+        raise ValueError(f"unknown timezone: {name!r}") from exc
+    return name
+
+
+def _tz_literal(tz: str | None) -> str:
+    return _validate_timezone(tz).replace("'", "''")
+
+
+def _local_ts_expr(tz: str | None) -> str:
+    # Ingest stores Claude's Z timestamps as naive UTC TIMESTAMP values.
+    # Convert them to local wall-clock timestamps before date_trunc/extract.
+    return f"timezone('{_tz_literal(tz)}', timezone('UTC', ts))"
+
+
 def summary(
     conn: duckdb.DuckDBPyConnection,
     since: str | None = None,
@@ -375,6 +396,106 @@ def spend_by(
         raise ValueError(f"unknown dimension: {dimension}")
 
     return conn.execute(q, params).fetchall()
+
+
+def grouped_timeseries(
+    conn: duckdb.DuckDBPyConnection,
+    bucket: str = "day",
+    stack: str = "none",
+    since: str | None = None,
+    limit: int = 365,
+    host: str | None = None,
+    timezone: str | None = "America/Los_Angeles",
+    series_limit: int = 12,
+) -> list[tuple]:
+    """Spend over time, optionally stacked by host/project.
+
+    `bucket` is hour/day/week/month. `stack` is none/model/host/project/host_project.
+    The bucket is computed in the requested display timezone.
+    """
+    if bucket not in {"hour", "day", "week", "month"}:
+        raise ValueError(f"unknown bucket: {bucket}")
+    if stack not in {"none", "model", "host", "project", "host_project"}:
+        raise ValueError(f"unknown stack: {stack}")
+    limit = max(1, min(int(limit), 2000))
+    series_limit = max(1, min(int(series_limit), 50))
+    where, params = _build_filter(since, host)
+    local_ts = _local_ts_expr(timezone)
+    bucket_expr = f"date_trunc('{bucket}', {local_ts})"
+    series_expr = {
+        "none": "'total'",
+        "model": "model",
+        "host": "host",
+        "project": "project_label",
+        "host_project": "host || ' / ' || project_label",
+    }[stack]
+
+    top_series_cte = ""
+    top_series_join = ""
+    if stack != "none":
+        top_series_cte = f"""
+        top_series AS (
+            SELECT {series_expr} AS series
+            FROM v_turn_cost
+            {where}
+            GROUP BY series
+            ORDER BY SUM(total_usd) DESC
+            LIMIT {series_limit}
+        ),
+        """
+        top_series_join = "JOIN top_series USING (series)"
+
+    return conn.execute(
+        f"""
+        WITH
+        {top_series_cte}
+        rollup AS (
+            SELECT
+                {bucket_expr} AS bucket,
+                {series_expr} AS series,
+                COUNT(*) AS turns,
+                SUM(input_tokens+output_tokens+cache_write_5m+cache_write_1h+cache_read) AS tokens,
+                SUM(total_usd) AS usd
+            FROM v_turn_cost
+            {where}
+            GROUP BY bucket, series
+        )
+        SELECT bucket, series, turns, tokens, usd
+        FROM rollup
+        {top_series_join}
+        WHERE bucket IN (
+            SELECT DISTINCT bucket FROM rollup ORDER BY bucket DESC LIMIT {limit}
+        )
+        ORDER BY bucket ASC, usd DESC
+        """,
+        [*params, *params] if stack != "none" else params,
+    ).fetchall()
+
+
+def metadata(conn: duckdb.DuckDBPyConnection) -> dict:
+    """Dashboard freshness metadata."""
+    turn_row = conn.execute(
+        """
+        SELECT MAX(ts) AS latest_turn_ts, COUNT(*) AS turns
+        FROM turns
+        """
+    ).fetchone()
+    try:
+        ingest_row = conn.execute(
+            """
+            SELECT MAX(last_ingested_at) AS last_ingested_at
+            FROM ingest_log
+            """
+        ).fetchone()
+    except duckdb.CatalogException:
+        ingest_row = (None,)
+    latest_turn = turn_row[0] if turn_row else None
+    last_ingested = ingest_row[0] if ingest_row else None
+    return {
+        "latest_turn_ts": latest_turn.isoformat() if latest_turn else None,
+        "last_ingested_at": last_ingested.isoformat() if last_ingested else None,
+        "turns": int(turn_row[1] or 0) if turn_row else 0,
+    }
 
 
 def top_turns(

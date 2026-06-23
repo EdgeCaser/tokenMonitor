@@ -251,6 +251,48 @@ def api_timeseries(bucket: str = "day", since: str = "all",
     return out
 
 
+@app.get("/api/spend_timeseries")
+def api_spend_timeseries(
+    bucket: str = Query("day"),
+    stack: str = Query("none"),
+    since: str = Query("all"),
+    limit: int = Query(365),
+    host: str | None = Query(None),
+    timezone: str = Query("America/Los_Angeles"),
+    series_limit: int = Query(12),
+):
+    conn = _conn()
+    try:
+        rows = A.grouped_timeseries(
+            conn,
+            bucket=bucket,
+            stack=stack,
+            since=since,
+            limit=limit,
+            host=host,
+            timezone=timezone,
+            series_limit=series_limit,
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return [
+        {
+            "bucket": b.isoformat() if hasattr(b, "isoformat") else str(b),
+            "series": s,
+            "turns": int(t),
+            "tokens": int(tok),
+            "usd": float(u or 0),
+        }
+        for b, s, t, tok, u in rows
+    ]
+
+
+@app.get("/api/meta")
+def api_meta():
+    conn = _conn()
+    return A.metadata(conn)
+
+
 @app.get("/api/quota")
 def api_quota(metric: str = Query("usd"), host: str | None = Query(None)):
     if metric not in ("usd", "tokens"):

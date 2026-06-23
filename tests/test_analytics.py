@@ -135,6 +135,37 @@ def test_cache_efficiency_includes_models(loaded):
     assert "claude-haiku-4-5-20251001" in models
 
 
+def test_grouped_timeseries_uses_display_timezone(loaded):
+    rows = A.grouped_timeseries(
+        loaded,
+        bucket="hour",
+        stack="none",
+        timezone="America/Los_Angeles",
+    )
+    assert rows
+    # Fixture timestamps are 2026-06-20T10:00:xxZ, which is 03:00 Pacific.
+    assert rows[0][0].hour == 3
+    assert rows[0][1] == "total"
+
+
+def test_grouped_timeseries_can_stack_by_host_and_project(loaded):
+    rows = A.grouped_timeseries(
+        loaded,
+        bucket="day",
+        stack="host_project",
+        timezone="America/Los_Angeles",
+    )
+    assert rows
+    assert any(r[1] == "local / test-proj" for r in rows)
+    assert sum(float(r[4]) for r in rows) == pytest.approx(A.summary(loaded)["total_usd"])
+
+
+def test_metadata_reports_latest_turn(loaded):
+    meta = A.metadata(loaded)
+    assert meta["turns"] >= 1
+    assert meta["latest_turn_ts"] is not None
+
+
 def test_parse_since():
     assert A.parse_since("all") is None
     assert A.parse_since(None) is None
