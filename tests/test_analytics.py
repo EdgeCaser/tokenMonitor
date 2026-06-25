@@ -221,6 +221,41 @@ def test_parse_since():
         A.parse_since("garbage")
 
 
+def test_parse_window():
+    from datetime import datetime
+
+    # all / empty -> open on both ends
+    assert A.parse_window("all") == (None, None)
+    assert A.parse_window(None) == (None, None)
+
+    # relative -> lower bound only
+    start, end = A.parse_window("7d")
+    assert start is not None and end is None
+
+    # absolute datetime range -> both bounds, used verbatim
+    start, end = A.parse_window("2026-01-01T08:00..2026-01-01T17:00")
+    assert start == datetime(2026, 1, 1, 8, 0)
+    assert end == datetime(2026, 1, 1, 17, 0)
+
+    # date-only end is inclusive of the whole day (bumped to next midnight)
+    start, end = A.parse_window("2026-01-01..2026-02-15")
+    assert start == datetime(2026, 1, 1, 0, 0)
+    assert end == datetime(2026, 2, 16, 0, 0)
+
+    # open-ended bounds on either side
+    assert A.parse_window("2026-01-01..") == (datetime(2026, 1, 1, 0, 0), None)
+    assert A.parse_window("..2026-02-15") == (None, datetime(2026, 2, 16, 0, 0))
+
+    # a bare absolute date reads as a "since <point>" lower bound
+    assert A.parse_window("2026-03-01") == (datetime(2026, 3, 1, 0, 0), None)
+
+    # parse_since stays the lower bound of whatever window was given
+    assert A.parse_since("2026-01-01..2026-02-15") == datetime(2026, 1, 1, 0, 0)
+
+    with pytest.raises(ValueError):
+        A.parse_window("garbage")
+
+
 # --- quota inference --------------------------------------------------------
 
 def test_sliding_window_peak():

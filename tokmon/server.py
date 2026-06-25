@@ -351,7 +351,7 @@ if not _WEB_DIR.exists():
 
 @app.get("/")
 def index() -> HTMLResponse:
-    html = (_WEB_DIR / "index.html").read_text()
+    html = (_WEB_DIR / "index.html").read_text(encoding="utf-8")
     return HTMLResponse(html)
 
 

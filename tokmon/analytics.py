@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -211,33 +212,86 @@ def connect_with_views(
     return conn
 
 
-def parse_since(since: str | None) -> datetime | None:
-    """Accept '7d', '30d', '24h', '60m', 'all', or None."""
-    if not since or since == "all":
+_REL_SINCE_RE = re.compile(r"^(\d+)([dhm])$")
+
+
+def _parse_bound(text: str, is_end: bool) -> datetime | None:
+    """Parse one side of an absolute range. Empty string -> None (open-ended).
+
+    A date-only *end* bound is bumped to the following midnight so the named
+    day is fully included (the window's upper bound is treated as exclusive).
+    Timestamps are matched on the same naive UTC basis the data is stored in,
+    so range values are read as the same wall-clock times the dashboard shows
+    in its turn/session tables.
+    """
+    if not text:
         return None
-    s = since.strip().lower()
-    if s.endswith("d"):
-        return datetime.now() - timedelta(days=int(s[:-1]))
-    if s.endswith("h"):
-        return datetime.now() - timedelta(hours=int(s[:-1]))
-    if s.endswith("m"):
-        return datetime.now() - timedelta(minutes=int(s[:-1]))
-    raise ValueError(f"unrecognized --since: {since!r}")
+    date_only = "T" not in text and ":" not in text and " " not in text
+    dt = datetime.fromisoformat(text)
+    if is_end and date_only:
+        dt = dt + timedelta(days=1)
+    return dt
+
+
+def parse_window(since: str | None) -> tuple[datetime | None, datetime | None]:
+    """Parse a time-window descriptor into (start, end) datetimes (either None).
+
+    Accepts:
+      - None / 'all'               -> (None, None)
+      - relative '7d' '24h' '60m'  -> (now - delta, None)
+      - absolute range '<a>..<b>'  -> (a, b); each side an ISO date or
+        datetime, and either side may be empty for an open-ended bound,
+        e.g. '2026-01-01..2026-02-15', '2026-01-01T08:00..2026-01-01T17:00',
+        '2026-01-01..', '..2026-02-15'.
+      - a bare ISO date/datetime   -> (that, None), i.e. 'since <point>'.
+    """
+    if not since or since.strip().lower() == "all":
+        return None, None
+    s = since.strip()
+    m = _REL_SINCE_RE.match(s.lower())
+    if m:
+        n, unit = int(m.group(1)), m.group(2)
+        delta = {"d": timedelta(days=n), "h": timedelta(hours=n),
+                 "m": timedelta(minutes=n)}[unit]
+        return datetime.now() - delta, None
+    if ".." in s:
+        a, _, b = s.partition("..")
+        return _parse_bound(a.strip(), is_end=False), _parse_bound(b.strip(), is_end=True)
+    try:
+        return _parse_bound(s, is_end=False), None
+    except ValueError:
+        raise ValueError(f"unrecognized --since: {since!r}")
+
+
+def parse_since(since: str | None) -> datetime | None:
+    """Backwards-compatible accessor for the window's lower bound (or None)."""
+    return parse_window(since)[0]
 
 
 def _build_filter(
     since: str | None = None,
     host: str | None = None,
+    *,
+    ts_col: str = "ts",
 ) -> tuple[str, list]:
-    """Return (where_clause, params) for the standard since+host filter."""
+    """Return (where_clause, params) for the standard since+host filter.
+
+    `since` may be a relative shorthand ('7d') or an absolute range
+    ('<start>..<end>'); see parse_window. `ts_col` lets callers that alias the
+    turn table (e.g. 't.ts') reuse the same window logic.
+    """
     clauses = []
     params: list = []
-    cutoff = parse_since(since)
-    if cutoff:
-        clauses.append("ts >= ?")
-        params.append(cutoff)
+    start, end = parse_window(since)
+    if start:
+        clauses.append(f"{ts_col} >= ?")
+        params.append(start)
+    if end:
+        clauses.append(f"{ts_col} < ?")
+        params.append(end)
     if host:
-        clauses.append("host = ?")
+        host_col = ts_col.rsplit(".", 1)[0] + ".host" if "." in ts_col else "host"
+        clauses.append(f"{host_col} = ?")
         params.append(host)
     where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
     return where, params
@@ -844,16 +898,7 @@ def tool_cost_attribution(
 ) -> list[tuple]:
     """For each tool: how many turns called it, the avg cost of those turns,
     and the total cost contributed."""
-    filter_clauses = []
-    params: list = []
-    cutoff = parse_since(since)
-    if cutoff:
-        filter_clauses.append("t.ts >= ?")
-        params.append(cutoff)
-    if host:
-        filter_clauses.append("t.host = ?")
-        params.append(host)
-    where = ("WHERE " + " AND ".join(filter_clauses)) if filter_clauses else ""
+    where, params = _build_filter(since, host, ts_col="t.ts")
     return conn.execute(
         f"""
         SELECT tc.tool_name,
@@ -1027,12 +1072,15 @@ def turn_explorer(
     timezone: str | None = "America/Los_Angeles",
 ) -> list[tuple]:
     """Filterable turn-level listing for the explorer tab."""
-    cutoff = parse_since(since)
+    start, end = parse_window(since)
     where = []
     params: list = []
-    if cutoff:
+    if start:
         where.append("t.ts >= ?")
-        params.append(cutoff)
+        params.append(start)
+    if end:
+        where.append("t.ts < ?")
+        params.append(end)
     if day:
         where.append(f"CAST(date_trunc('day', {_local_ts_expr(timezone).replace('ts', 't.ts')}) AS DATE) = CAST(? AS DATE)")
         params.append(day)

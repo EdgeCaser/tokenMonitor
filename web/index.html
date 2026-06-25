@@ -83,7 +83,19 @@
         <option value="24h">24h</option>
         <option value="6h">6h</option>
         <option value="1h">1h</option>
+        <option value="custom">custom range…</option>
       </select>
+      <div id="custom-range" class="hidden flex items-center gap-2">
+        <input id="since-from" type="datetime-local"
+               class="border rounded px-2 py-1 text-sm bg-white"
+               title="window start, in the chart timezone (Pacific) — leave blank for 'from the beginning'" />
+        <span class="text-slate-400 text-sm">to</span>
+        <input id="since-to" type="datetime-local"
+               class="border rounded px-2 py-1 text-sm bg-white"
+               title="window end, in the chart timezone (Pacific) — leave blank for 'up to now'" />
+        <button id="since-apply"
+                class="bg-slate-800 text-white rounded px-3 py-1 text-sm">apply</button>
+      </div>
     </div>
   </header>
 
@@ -773,7 +785,6 @@ function setActive(name) {
 }
 
 document.querySelectorAll(".tab").forEach(b => b.addEventListener("click", () => setActive(b.dataset.tab)));
-$("#since").addEventListener("change", () => load(currentTab()));
 $("#host").addEventListener("change", () => load(currentTab()));
 $("#spend-bucket").addEventListener("change", () => { spendZoom = { start: 0, end: null }; load("spend"); });
 $("#spend-stack").addEventListener("change", () => { spendZoom = { start: 0, end: null }; load("spend"); });
@@ -788,10 +799,70 @@ $("#spend-pan-right").addEventListener("click", () => panSpend(1));
 document.querySelectorAll("[data-preset]").forEach(b => b.addEventListener("click", () => runPreset(b.dataset.preset)));
 $("#copy-turn-query").addEventListener("click", () => copyCurrentTurnsApi());
 
+// Format an instant as the "YYYY-MM-DDTHH:MM" datetime-local shape, expressed
+// as wall-clock time in CHART_TZ (so the pickers read in the same Pacific time
+// the charts and tables display, regardless of the viewer's own timezone).
+function toChartTzInput(d) {
+  const p = Object.fromEntries(
+    new Intl.DateTimeFormat("en-US", {
+      timeZone: CHART_TZ, hourCycle: "h23",
+      year: "numeric", month: "2-digit", day: "2-digit",
+      hour: "2-digit", minute: "2-digit",
+    }).formatToParts(d).map(x => [x.type, x.value])
+  );
+  return `${p.year}-${p.month}-${p.day}T${p.hour}:${p.minute}`;
+}
+
+// Interpret a "YYYY-MM-DDTHH:MM" picker value as wall-clock time in CHART_TZ and
+// return the equivalent naive-UTC string the server filters on (ts is stored as
+// naive UTC). DST-aware: derives the offset from the instant itself via Intl.
+function chartTzWallToUtc(s) {
+  if (!s) return "";
+  const provisional = new Date(s + ":00Z");          // treat input as if UTC
+  const p = Object.fromEntries(
+    new Intl.DateTimeFormat("en-US", {
+      timeZone: CHART_TZ, hourCycle: "h23",
+      year: "numeric", month: "2-digit", day: "2-digit",
+      hour: "2-digit", minute: "2-digit", second: "2-digit",
+    }).formatToParts(provisional).map(x => [x.type, x.value])
+  );
+  const renderedAsUtc = Date.UTC(+p.year, +p.month - 1, +p.day,
+                                 +p.hour, +p.minute, +p.second);
+  const offset = renderedAsUtc - provisional.getTime();  // CHART_TZ ahead of UTC
+  return new Date(provisional.getTime() - offset).toISOString().slice(0, 16);
+}
+
+// "since" dropdown: a non-custom choice reloads immediately; "custom range…"
+// reveals two datetime inputs and waits for apply (prefilled to the last 7d).
+$("#since").addEventListener("change", () => {
+  const isCustom = $("#since").value === "custom";
+  $("#custom-range").classList.toggle("hidden", !isCustom);
+  if (isCustom) {
+    if (!$("#since-from").value && !$("#since-to").value) {
+      const now = new Date();
+      $("#since-to").value   = toChartTzInput(now);
+      $("#since-from").value = toChartTzInput(new Date(now - 7 * 86400000));
+    }
+  } else {
+    load(currentTab());
+  }
+});
+$("#since-apply").addEventListener("click", () => load(currentTab()));
+$("#since-from").addEventListener("change", () => load(currentTab()));
+$("#since-to").addEventListener("change", () => load(currentTab()));
+
 function currentTab() {
   return document.querySelector(".tab.active").dataset.tab;
 }
-const since = () => $("#since").value;
+// The active time window as a server-side `since` value: a preset shorthand,
+// or "<start>..<end>" (either side may be blank) when a custom range is set.
+const since = () => {
+  if ($("#since").value !== "custom") return $("#since").value;
+  const f = chartTzWallToUtc($("#since-from").value);
+  const t = chartTzWallToUtc($("#since-to").value);
+  if (!f && !t) return "all";
+  return `${f}..${t}`;
+};
 const host  = () => $("#host").value;
 const hostQ = () => host() ? `&host=${encodeURIComponent(host())}` : "";
 
@@ -837,6 +908,13 @@ async function loadMeta() {
 function autoBucket() {
   const s = since();
   if (s === "1h" || s === "6h" || s === "24h" || s === "7d") return "hour";
+  if (s.includes("..")) {
+    // Custom range: hourly buckets when the span is short, else daily.
+    const [a, b] = s.split("..");
+    const start = a ? new Date(a) : null;
+    const end   = b ? new Date(b) : new Date();
+    if (start && (end - start) <= 14 * 86400000) return "hour";
+  }
   return "day";
 }
 function autoBucketLimit() {
