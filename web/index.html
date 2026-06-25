@@ -838,9 +838,11 @@ $("#since").addEventListener("change", () => {
   const isCustom = $("#since").value === "custom";
   $("#custom-range").classList.toggle("hidden", !isCustom);
   if (isCustom) {
-    if (!$("#since-from").value && !$("#since-to").value) {
-      const now = new Date();
-      $("#since-to").value   = toChartTzInput(now);
+    const now = new Date();
+    // Always refresh "to" to now so it doesn't go stale across re-opens.
+    // Only pre-fill "from" when it's genuinely blank (don't clobber a user edit).
+    $("#since-to").value = toChartTzInput(now);
+    if (!$("#since-from").value) {
       $("#since-from").value = toChartTzInput(new Date(now - 7 * 86400000));
     }
   } else {
