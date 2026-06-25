@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -212,6 +212,11 @@ def connect_with_views(
     return conn
 
 
+def _utcnow() -> datetime:
+    """Current UTC time as a naive datetime, matching how ts values are stored."""
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
 _REL_SINCE_RE = re.compile(r"^(\d+)([dhm])$")
 
 
@@ -253,7 +258,7 @@ def parse_window(since: str | None) -> tuple[datetime | None, datetime | None]:
         n, unit = int(m.group(1)), m.group(2)
         delta = {"d": timedelta(days=n), "h": timedelta(hours=n),
                  "m": timedelta(minutes=n)}[unit]
-        return datetime.now() - delta, None
+        return _utcnow() - delta, None
     if ".." in s:
         a, _, b = s.partition("..")
         return _parse_bound(a.strip(), is_end=False), _parse_bound(b.strip(), is_end=True)
@@ -780,8 +785,9 @@ def calendar_heatmap(
 ) -> list[tuple]:
     """One row per day for the last N days. Empty days are not returned —
     caller fills gaps with 0 to render the grid."""
-    where_clauses = ["ts >= CURRENT_TIMESTAMP - (INTERVAL 1 DAY * ?)"]
-    params: list = [days_back]
+    cutoff = _utcnow() - timedelta(days=days_back)
+    where_clauses = ["ts >= ?"]
+    params: list = [cutoff]
     if host:
         where_clauses.append("host = ?")
         params.append(host)
@@ -867,8 +873,9 @@ def burn_rate(
     host: str | None = None,
 ) -> dict:
     """Recent spend rate. Returns $ in the window AND extrapolated $/hour."""
-    where_clauses = ["ts >= CURRENT_TIMESTAMP - (INTERVAL 1 MINUTE * ?)"]
-    params: list = [window_minutes]
+    cutoff = _utcnow() - timedelta(minutes=window_minutes)
+    where_clauses = ["ts >= ?"]
+    params: list = [cutoff]
     if host:
         where_clauses.append("host = ?")
         params.append(host)
@@ -991,24 +998,26 @@ def monthly_forecast(
     plus a comparison to last month's same-day-cumulative.
     """
     extra = "AND host = ?" if host else ""
-    params: list = [host] if host else []
+    utc_now = _utcnow()
+    # 6 utc_now placeholders in the SELECT, then optionally 1 for host in WHERE
+    query_params: list = [utc_now] * 6 + ([host] if host else [])
     row = conn.execute(
         f"""
         SELECT
-            COALESCE(SUM(CASE WHEN date_trunc('month', ts) = date_trunc('month', CURRENT_TIMESTAMP)
+            COALESCE(SUM(CASE WHEN date_trunc('month', ts) = date_trunc('month', ?::TIMESTAMP)
                               THEN total_usd ELSE 0 END), 0) AS month_to_date,
-            COALESCE(SUM(CASE WHEN date_trunc('month', ts) = date_trunc('month', CURRENT_TIMESTAMP - INTERVAL 1 MONTH)
-                              AND ts < date_trunc('month', CURRENT_TIMESTAMP - INTERVAL 1 MONTH) + (CURRENT_TIMESTAMP - date_trunc('month', CURRENT_TIMESTAMP))
+            COALESCE(SUM(CASE WHEN date_trunc('month', ts) = date_trunc('month', ?::TIMESTAMP - INTERVAL 1 MONTH)
+                              AND ts < date_trunc('month', ?::TIMESTAMP - INTERVAL 1 MONTH) + (?::TIMESTAMP - date_trunc('month', ?::TIMESTAMP))
                               THEN total_usd ELSE 0 END), 0) AS last_month_same_window,
-            COALESCE(SUM(CASE WHEN date_trunc('month', ts) = date_trunc('month', CURRENT_TIMESTAMP - INTERVAL 1 MONTH)
+            COALESCE(SUM(CASE WHEN date_trunc('month', ts) = date_trunc('month', ?::TIMESTAMP - INTERVAL 1 MONTH)
                               THEN total_usd ELSE 0 END), 0) AS last_month_total
         FROM v_turn_cost
         WHERE 1=1 {extra}
         """,
-        params,
+        query_params,
     ).fetchone()
-    from datetime import datetime, date
-    today = datetime.now()
+    from datetime import date
+    today = utc_now
     # Days elapsed in the current month (including today, fractional)
     days_elapsed = today.day + (today.hour / 24.0)
     # Days in the current month

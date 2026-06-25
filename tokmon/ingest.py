@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import os
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable
 
@@ -232,16 +232,17 @@ def _ingest_file(
                 new_user_turns_local += 1
 
     new_offset = last_offset + bytes_consumed if bytes_consumed else size
+    now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
     conn.execute(
         """
-        INSERT INTO ingest_log VALUES (?, ?, ?, CURRENT_TIMESTAMP, ?)
+        INSERT INTO ingest_log VALUES (?, ?, ?, ?, ?)
         ON CONFLICT (source_file) DO UPDATE
         SET mtime = excluded.mtime,
             last_offset = excluded.last_offset,
             last_ingested_at = excluded.last_ingested_at,
             malformed_lines = excluded.malformed_lines
         """,
-        [source_file, mtime, new_offset, malformed_total + malformed_local],
+        [source_file, mtime, new_offset, now_utc, malformed_total + malformed_local],
     )
 
     if new_turns_local or new_user_turns_local or malformed_local:
