@@ -99,7 +99,7 @@ def _migrate_normalize_project_labels(conn) -> None:
 
     A previous version of `_project_label_from_path` used os.path.basename,
     which on POSIX hosts didn't split Windows-style paths, leaving labels
-    like `C:\\Users\\ianfe\\...\\memsync` instead of `memsync`.
+    like `C:\\Users\\you\\...\\memsync` instead of `memsync`.
     """
     # DuckDB regex needs the backslashes escaped twice (once for SQL, once for
     # the regex engine).

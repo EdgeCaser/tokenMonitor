@@ -6,7 +6,7 @@ from tokmon import sync as S
 
 
 def test_build_rsync_cmd_basic():
-    t = S.SyncTarget(pi_user="ian", pi_host="pi.local", pi_path="/home/ian")
+    t = S.SyncTarget(pi_user="pi", pi_host="pi.local", pi_path="/home/pi")
     cmd = S.build_rsync_cmd(t, source=Path("/home/laptop/.claude/projects"))
     assert cmd[0] == "rsync"
     assert "--include=*.jsonl" in cmd
@@ -14,7 +14,7 @@ def test_build_rsync_cmd_basic():
     # normalize separators so the assertion holds on Windows too, where
     # str(Path("/home/...")) yields backslashes
     assert cmd[-2].replace("\\", "/") == "/home/laptop/.claude/projects/"
-    assert cmd[-1].startswith("ian@pi.local:/home/ian/sync/")
+    assert cmd[-1].startswith("pi@pi.local:/home/pi/sync/")
     assert cmd[-1].endswith("/.claude/projects/")
 
 
@@ -47,7 +47,7 @@ def test_load_target_missing_keys_raises(tmp_path, monkeypatch):
 
 
 def test_save_and_load_round_trip(tmp_path):
-    t1 = S.SyncTarget(pi_user="ian", pi_host="bob", pi_path="/home/ian",
+    t1 = S.SyncTarget(pi_user="pi", pi_host="testhost", pi_path="/home/pi",
                       sync_subpath="claude-sync")
     f = tmp_path / "sync.toml"
     S.save_target(t1, f)

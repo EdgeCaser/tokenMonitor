@@ -31,7 +31,7 @@ class IngestStats:
 
 def _project_label_from_path(path: str) -> str:
     """Last path component, splitting on both / and \\ so Windows paths
-    (`C:\\Users\\ianfe\\...\\memsync`) yield 'memsync', not the whole string.
+    (`C:\\Users\\you\\...\\memsync`) yield 'memsync', not the whole string.
     `os.path.basename` only understands the host OS's separator."""
     if not path:
         return "<unknown>"

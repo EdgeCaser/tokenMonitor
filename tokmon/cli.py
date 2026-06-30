@@ -483,7 +483,7 @@ def sync():
 @sync.command("set")
 @click.option("--pi-user", required=True)
 @click.option("--pi-host", required=True)
-@click.option("--pi-path", required=True, help="Absolute home path on the Pi (e.g. /home/ian)")
+@click.option("--pi-path", required=True, help="Absolute home path on the Pi (e.g. /home/pi)")
 def sync_set(pi_user, pi_host, pi_path):
     """Write ~/.tokmon/sync.toml so `tokmon push` works without env vars."""
     from . import sync as S

@@ -20,18 +20,18 @@
         Then add C:\msys64\usr\bin to PATH so rsync is found.
 
     Run from the repo root, in a regular (non-admin) PowerShell:
-      .\deploy\setup-client-windows.ps1 -PiUser edgecaser -PiHost pi-gateway -PiPath /home/edgecaser
+      .\deploy\setup-client-windows.ps1 -PiUser pi -PiHost raspberrypi -PiPath /home/pi
 
     Or set env vars and just run .\deploy\setup-client-windows.ps1:
-      $env:TOKMON_PI_USER  = "edgecaser"
-      $env:TOKMON_PI_HOST  = "pi-gateway"
-      $env:TOKMON_PI_PATH  = "/home/edgecaser"
+      $env:TOKMON_PI_USER  = "pi"
+      $env:TOKMON_PI_HOST  = "raspberrypi"
+      $env:TOKMON_PI_PATH  = "/home/pi"
 
 .PARAMETER PiUser
     SSH user on the Pi.
 
 .PARAMETER PiHost
-    SSH hostname (Tailscale name preferred, e.g. "pi-gateway").
+    SSH hostname (Tailscale name preferred, e.g. "raspberrypi").
 
 .PARAMETER PiPath
     Absolute home path on the Pi where ~/sync/ and ~/.tokmon/ live.

@@ -6,9 +6,9 @@ from launchd / cron.
 
 Config file shape (~/.tokmon/sync.toml):
 
-    pi_user = "ian"
+    pi_user = "pi"
     pi_host = "raspberrypi"
-    pi_path = "/home/ian"               # ~ on the Pi
+    pi_path = "/home/pi"                # ~ on the Pi
     sync_subpath = "sync"               # final dest is pi_path/sync/<this-host>/.claude/projects/
 """
 
@@ -47,7 +47,7 @@ def _no_window_kwargs() -> dict:
 class SyncTarget:
     pi_user: str
     pi_host: str
-    pi_path: str          # absolute path on the Pi (e.g. /home/ian)
+    pi_path: str          # absolute path on the Pi (e.g. /home/pi)
     sync_subpath: str = "sync"
 
     @property
