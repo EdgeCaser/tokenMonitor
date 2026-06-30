@@ -59,7 +59,7 @@
 </head>
 <body class="bg-slate-50 text-slate-900">
 
-<div class="max-w-7xl mx-auto p-6 space-y-6">
+<div class="max-w-7xl mx-auto p-3 md:p-6 space-y-4 md:space-y-6">
 
   <header class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
     <div>
@@ -85,37 +85,37 @@
         <option value="1h">1h</option>
         <option value="custom">custom range…</option>
       </select>
-      <div id="custom-range" class="hidden flex items-center gap-2">
+      <div id="custom-range" class="hidden flex flex-col sm:flex-row items-start sm:items-center gap-2">
         <input id="since-from" type="datetime-local"
-               class="border rounded px-2 py-1 text-sm bg-white"
+               class="border rounded px-2 py-1 text-sm bg-white w-full sm:w-auto"
                title="window start, in the chart timezone (Pacific) — leave blank for 'from the beginning'" />
-        <span class="text-slate-400 text-sm">to</span>
+        <span class="text-slate-400 text-sm hidden sm:inline">to</span>
         <input id="since-to" type="datetime-local"
-               class="border rounded px-2 py-1 text-sm bg-white"
+               class="border rounded px-2 py-1 text-sm bg-white w-full sm:w-auto"
                title="window end, in the chart timezone (Pacific) — leave blank for 'up to now'" />
         <button id="since-apply"
-                class="bg-slate-800 text-white rounded px-3 py-1 text-sm">apply</button>
+                class="bg-slate-800 text-white rounded px-3 py-1 text-sm w-full sm:w-auto">apply</button>
       </div>
     </div>
   </header>
 
-  <nav class="flex gap-2 border-b">
-    <button class="tab active px-4 py-2 rounded-t text-sm font-medium" data-tab="overview">Overview</button>
-    <button class="tab px-4 py-2 rounded-t text-sm font-medium" data-tab="projects">Projects</button>
-    <button class="tab px-4 py-2 rounded-t text-sm font-medium" data-tab="sessions">Sessions</button>
-    <button class="tab px-4 py-2 rounded-t text-sm font-medium" data-tab="tools">Tools</button>
-    <button class="tab px-4 py-2 rounded-t text-sm font-medium" data-tab="cache">Cache</button>
-    <button class="tab px-4 py-2 rounded-t text-sm font-medium" data-tab="patterns">Patterns</button>
-    <button class="tab px-4 py-2 rounded-t text-sm font-medium" data-tab="branches">Branches</button>
-    <button class="tab px-4 py-2 rounded-t text-sm font-medium" data-tab="turns">Turns</button>
-    <button class="tab px-4 py-2 rounded-t text-sm font-medium" data-tab="spend">Spend</button>
-    <button class="tab px-4 py-2 rounded-t text-sm font-medium" data-tab="analytics">Analytics</button>
-    <button class="tab px-4 py-2 rounded-t text-sm font-medium" data-tab="quotas">Quotas</button>
+  <nav class="flex gap-1 border-b overflow-x-auto flex-nowrap">
+    <button class="tab active px-3 py-2 rounded-t text-sm font-medium whitespace-nowrap flex-shrink-0" data-tab="overview">Overview</button>
+    <button class="tab px-3 py-2 rounded-t text-sm font-medium whitespace-nowrap flex-shrink-0" data-tab="projects">Projects</button>
+    <button class="tab px-3 py-2 rounded-t text-sm font-medium whitespace-nowrap flex-shrink-0" data-tab="sessions">Sessions</button>
+    <button class="tab px-3 py-2 rounded-t text-sm font-medium whitespace-nowrap flex-shrink-0" data-tab="tools">Tools</button>
+    <button class="tab px-3 py-2 rounded-t text-sm font-medium whitespace-nowrap flex-shrink-0" data-tab="cache">Cache</button>
+    <button class="tab px-3 py-2 rounded-t text-sm font-medium whitespace-nowrap flex-shrink-0" data-tab="patterns">Patterns</button>
+    <button class="tab px-3 py-2 rounded-t text-sm font-medium whitespace-nowrap flex-shrink-0" data-tab="branches">Branches</button>
+    <button class="tab px-3 py-2 rounded-t text-sm font-medium whitespace-nowrap flex-shrink-0" data-tab="turns">Turns</button>
+    <button class="tab px-3 py-2 rounded-t text-sm font-medium whitespace-nowrap flex-shrink-0" data-tab="spend">Spend</button>
+    <button class="tab px-3 py-2 rounded-t text-sm font-medium whitespace-nowrap flex-shrink-0" data-tab="analytics">Analytics</button>
+    <button class="tab px-3 py-2 rounded-t text-sm font-medium whitespace-nowrap flex-shrink-0" data-tab="quotas">Quotas</button>
   </nav>
 
   <!-- OVERVIEW -->
   <section data-pane="overview" class="space-y-6">
-    <div class="grid grid-cols-3 gap-4">
+    <div class="grid grid-cols-2 md:grid-cols-3 gap-4">
       <div class="bg-white rounded shadow p-4">
         <div class="text-xs uppercase text-slate-500">
           turns
@@ -169,7 +169,7 @@
       </div>
     </div>
 
-    <div class="grid grid-cols-2 gap-4">
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
       <div class="bg-white rounded shadow p-4">
         <h2 class="font-semibold mb-1">
           This month's spend forecast
@@ -243,7 +243,7 @@
       </div>
     </div>
 
-    <div class="grid grid-cols-2 gap-4">
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
       <div class="bg-white rounded shadow p-4">
         <h2 class="font-semibold mb-3">Top projects</h2>
         <table class="w-full text-sm">
@@ -283,10 +283,12 @@
     <div class="subhead mb-3">
       <span id="projects-merge-note"></span>
     </div>
-    <table class="w-full text-sm">
-      <thead id="t-projects-head"></thead>
-      <tbody id="t-projects-all"></tbody>
-    </table>
+    <div class="overflow-x-auto">
+      <table class="w-full text-sm">
+        <thead id="t-projects-head"></thead>
+        <tbody id="t-projects-all"></tbody>
+      </table>
+    </div>
   </section>
 
   <!-- SESSIONS -->
@@ -297,26 +299,30 @@
         <span class="tip" data-tip="What: every Claude Code session, sorted by spend.&#10;Why care: Sessions tagged 'outlier N×' are statistically expensive for their project — z-score ≥ 2 std-devs above that project's mean session cost (skips projects with <3 sessions to avoid noise). These are your forensic candidates — drill in to see what made them spike.">?</span>
       </h2>
       <div class="subhead mb-3">Click any session to see its turn-by-turn timeline. Amber chip = statistical outlier.</div>
-      <table class="w-full text-sm">
-        <thead><tr class="text-slate-500 text-left">
-          <th>session</th><th>project</th>
-          <th class="text-right">turns</th><th class="text-right">tokens</th>
-          <th class="text-right">$ spend</th>
-        </tr></thead>
-        <tbody id="t-sessions-all"></tbody>
-      </table>
+      <div class="overflow-x-auto">
+        <table class="w-full text-sm">
+          <thead><tr class="text-slate-500 text-left">
+            <th>session</th><th>project</th>
+            <th class="text-right">turns</th><th class="text-right">tokens</th>
+            <th class="text-right">$ spend</th>
+          </tr></thead>
+          <tbody id="t-sessions-all"></tbody>
+        </table>
+      </div>
     </div>
     <div id="session-detail" class="hidden bg-white rounded shadow p-4">
       <h2 class="font-semibold mb-3">Session detail</h2>
-      <table class="w-full text-sm">
-        <thead><tr class="text-slate-500 text-left">
-          <th>ts</th><th>model</th>
-          <th class="text-right">in</th><th class="text-right">out</th>
-          <th class="text-right">cw</th><th class="text-right">cr</th>
-          <th class="text-right">$</th><th class="text-right">tools</th>
-        </tr></thead>
-        <tbody id="t-session-detail"></tbody>
-      </table>
+      <div class="overflow-x-auto">
+        <table class="w-full text-sm">
+          <thead><tr class="text-slate-500 text-left">
+            <th>ts</th><th>model</th>
+            <th class="text-right">in</th><th class="text-right">out</th>
+            <th class="text-right">cw</th><th class="text-right">cr</th>
+            <th class="text-right">$</th><th class="text-right">tools</th>
+          </tr></thead>
+          <tbody id="t-session-detail"></tbody>
+        </table>
+      </div>
     </div>
   </section>
 
@@ -333,16 +339,18 @@
       <div class="subhead mb-3">
         Attribution, not literal cost. A turn that uses both Bash and Read counts under both rows.
       </div>
-      <table class="w-full text-sm">
-        <thead><tr class="text-slate-500 text-left">
-          <th>tool</th>
-          <th class="text-right">calls</th>
-          <th class="text-right">turns using</th>
-          <th class="text-right">avg $/turn</th>
-          <th class="text-right">total $</th>
-        </tr></thead>
-        <tbody id="t-tools"></tbody>
-      </table>
+      <div class="overflow-x-auto">
+        <table class="w-full text-sm">
+          <thead><tr class="text-slate-500 text-left">
+            <th>tool</th>
+            <th class="text-right">calls</th>
+            <th class="text-right">turns using</th>
+            <th class="text-right">avg $/turn</th>
+            <th class="text-right">total $</th>
+          </tr></thead>
+          <tbody id="t-tools"></tbody>
+        </table>
+      </div>
     </div>
   </section>
 
@@ -355,15 +363,17 @@
     <div class="subhead mb-3">
       Per-branch cost attribution. Skips turns made outside a git repo.
     </div>
-    <table class="w-full text-sm">
-      <thead><tr class="text-slate-500 text-left">
-        <th>project</th><th>branch</th>
-        <th class="text-right">sessions</th>
-        <th class="text-right">turns</th>
-        <th class="text-right">$ spend</th>
-      </tr></thead>
-      <tbody id="t-branches"></tbody>
-    </table>
+    <div class="overflow-x-auto">
+      <table class="w-full text-sm">
+        <thead><tr class="text-slate-500 text-left">
+          <th>project</th><th>branch</th>
+          <th class="text-right">sessions</th>
+          <th class="text-right">turns</th>
+          <th class="text-right">$ spend</th>
+        </tr></thead>
+        <tbody id="t-branches"></tbody>
+      </table>
+    </div>
   </section>
 
   <!-- TURNS EXPLORER -->
@@ -376,7 +386,7 @@
       <div class="subhead mb-3">
         Forensic view. Click any row for the raw usage block.
       </div>
-      <div class="grid grid-cols-5 gap-3 mb-3 text-sm">
+      <div class="grid grid-cols-2 md:grid-cols-5 gap-3 mb-3 text-sm">
         <input id="t-flt-model"   placeholder="model (exact)"        class="border rounded px-2 py-1" />
         <input id="t-flt-project" placeholder="project label or path" class="border rounded px-2 py-1" />
         <input id="t-flt-tool"    placeholder="tool (e.g. Bash)"       class="border rounded px-2 py-1" />
@@ -422,15 +432,17 @@
     </div>
     <div class="bg-white rounded shadow p-4">
       <h2 class="font-semibold mb-3">Patterns by host (within current filters)</h2>
-      <table class="w-full text-sm">
-        <thead><tr class="text-slate-500 text-left">
-          <th>host</th>
-          <th class="text-right">peak hour</th>
-          <th class="text-right">peak day</th>
-          <th class="text-right">most active when</th>
-        </tr></thead>
-        <tbody id="t-patterns-host"></tbody>
-      </table>
+      <div class="overflow-x-auto">
+        <table class="w-full text-sm">
+          <thead><tr class="text-slate-500 text-left">
+            <th>host</th>
+            <th class="text-right">peak hour</th>
+            <th class="text-right">peak day</th>
+            <th class="text-right">most active when</th>
+          </tr></thead>
+          <tbody id="t-patterns-host"></tbody>
+        </table>
+      </div>
     </div>
   </section>
 
@@ -443,20 +455,22 @@
     <div class="subhead mb-3">
       cache read = served from cache (cheap). cache write = paid premium to populate cache. uncached input = full-price.
     </div>
-    <table class="w-full text-sm">
-      <thead><tr class="text-slate-500 text-left">
-        <th>model</th>
-        <th class="text-right">cache read</th><th class="text-right">cache write</th>
-        <th class="text-right">uncached input</th><th class="text-right">hit %</th>
-      </tr></thead>
-      <tbody id="t-cache"></tbody>
-    </table>
+    <div class="overflow-x-auto">
+      <table class="w-full text-sm">
+        <thead><tr class="text-slate-500 text-left">
+          <th>model</th>
+          <th class="text-right">cache read</th><th class="text-right">cache write</th>
+          <th class="text-right">uncached input</th><th class="text-right">hit %</th>
+        </tr></thead>
+        <tbody id="t-cache"></tbody>
+      </table>
+    </div>
   </section>
 
   <!-- SPEND -->
   <section data-pane="spend" class="hidden bg-white rounded shadow p-4">
-    <div class="flex flex-wrap items-center justify-between gap-3 mb-3">
-      <div class="flex flex-wrap items-center gap-3">
+    <div class="flex flex-col sm:flex-row sm:flex-wrap sm:items-center sm:justify-between gap-3 mb-3">
+      <div class="flex flex-wrap items-center gap-2">
         <label class="text-sm text-slate-600">bucket</label>
         <select id="spend-bucket" class="border rounded px-2 py-1 text-sm bg-white">
           <option value="day">day</option>
@@ -511,10 +525,10 @@
         </div>
       </div>
     </div>
-    <div class="grid grid-cols-3 gap-4" id="analytics-cards"></div>
-    <div class="grid grid-cols-4 gap-4" id="token-cards"></div>
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-4" id="analytics-cards"></div>
+    <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4" id="token-cards"></div>
 
-    <div class="grid grid-cols-2 gap-4">
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
       <div class="bg-white rounded shadow p-4">
         <h2 class="font-semibold mb-1">Token type stack</h2>
         <div class="subhead mb-3">Input, output, cache write, and cache read volume over time.</div>
@@ -527,7 +541,7 @@
       </div>
     </div>
 
-    <div class="grid grid-cols-2 gap-4">
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
       <div class="bg-white rounded shadow p-4">
         <h2 class="font-semibold mb-1">Cumulative spend velocity</h2>
         <div class="subhead mb-3">Running total with recent slope. Good for seeing when usage changed gears.</div>
@@ -540,7 +554,7 @@
       </div>
     </div>
 
-    <div class="grid grid-cols-2 gap-4">
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
       <div class="bg-white rounded shadow p-4">
         <h2 class="font-semibold mb-1">Host duel</h2>
         <div class="subhead mb-3">Daily spend stacked by machine.</div>
@@ -559,7 +573,7 @@
       <div style="height: 320px;"><canvas id="chart-analytics-projects"></canvas></div>
     </div>
 
-    <div class="grid grid-cols-2 gap-4">
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
       <div class="bg-white rounded shadow p-4">
         <h2 class="font-semibold mb-1">Daily token weather</h2>
         <div class="subhead mb-3">Each dot is a day: x = tokens, y = dollars. High-left dots are pricey for their size.</div>
@@ -572,92 +586,104 @@
       </div>
     </div>
 
-    <div class="grid grid-cols-2 gap-4">
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
       <div class="bg-white rounded shadow p-4">
         <h2 class="font-semibold mb-1">Project efficiency lab</h2>
         <div class="subhead mb-3">Find context-heavy projects and oddly expensive token mixes.</div>
-        <table class="w-full text-sm">
-          <thead><tr class="text-slate-500 text-left">
-            <th>project</th>
-            <th class="text-right">tokens/turn</th>
-            <th class="text-right">$/MTok</th>
-            <th class="text-right">turns</th>
-          </tr></thead>
-          <tbody id="analytics-efficiency"></tbody>
-        </table>
+        <div class="overflow-x-auto">
+          <table class="w-full text-sm">
+            <thead><tr class="text-slate-500 text-left">
+              <th>project</th>
+              <th class="text-right">tokens/turn</th>
+              <th class="text-right">$/MTok</th>
+              <th class="text-right">turns</th>
+            </tr></thead>
+            <tbody id="analytics-efficiency"></tbody>
+          </table>
+        </div>
       </div>
       <div class="bg-white rounded shadow p-4">
         <h2 class="font-semibold mb-1">Token hog sessions</h2>
         <div class="subhead mb-3">Biggest sessions by raw token volume. These are context-bloat candidates.</div>
-        <table class="w-full text-sm">
-          <thead><tr class="text-slate-500 text-left">
-            <th>session</th><th>project</th>
-            <th class="text-right">tokens</th>
-            <th class="text-right">$</th>
-          </tr></thead>
-          <tbody id="analytics-token-hogs"></tbody>
-        </table>
+        <div class="overflow-x-auto">
+          <table class="w-full text-sm">
+            <thead><tr class="text-slate-500 text-left">
+              <th>session</th><th>project</th>
+              <th class="text-right">tokens</th>
+              <th class="text-right">$</th>
+            </tr></thead>
+            <tbody id="analytics-token-hogs"></tbody>
+          </table>
+        </div>
       </div>
     </div>
 
-    <div class="grid grid-cols-2 gap-4">
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
       <div class="bg-white rounded shadow p-4">
         <h2 class="font-semibold mb-1">Daily anomaly detector</h2>
         <div class="subhead mb-3">Days with unusually high spend or token volume relative to this selected range.</div>
-        <table class="w-full text-sm">
-          <thead><tr class="text-slate-500 text-left">
-            <th>day</th>
-            <th class="text-right">tokens</th>
-            <th class="text-right">$</th>
-            <th class="text-right">score</th>
-          </tr></thead>
-          <tbody id="analytics-anomalies"></tbody>
-        </table>
+        <div class="overflow-x-auto">
+          <table class="w-full text-sm">
+            <thead><tr class="text-slate-500 text-left">
+              <th>day</th>
+              <th class="text-right">tokens</th>
+              <th class="text-right">$</th>
+              <th class="text-right">score</th>
+            </tr></thead>
+            <tbody id="analytics-anomalies"></tbody>
+          </table>
+        </div>
       </div>
       <div class="bg-white rounded shadow p-4">
         <h2 class="font-semibold mb-1">Context bloat suspects</h2>
         <div class="subhead mb-3">Sessions with the largest average token load per turn.</div>
-        <table class="w-full text-sm">
-          <thead><tr class="text-slate-500 text-left">
-            <th>session</th><th>project</th>
-            <th class="text-right">tokens/turn</th>
-            <th class="text-right">turns</th>
-          </tr></thead>
-          <tbody id="analytics-context-bloat"></tbody>
-        </table>
+        <div class="overflow-x-auto">
+          <table class="w-full text-sm">
+            <thead><tr class="text-slate-500 text-left">
+              <th>session</th><th>project</th>
+              <th class="text-right">tokens/turn</th>
+              <th class="text-right">turns</th>
+            </tr></thead>
+            <tbody id="analytics-context-bloat"></tbody>
+          </table>
+        </div>
       </div>
     </div>
 
-    <div class="grid grid-cols-2 gap-4">
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
       <div class="bg-white rounded shadow p-4">
         <h2 class="font-semibold mb-1">Model drift radar</h2>
         <div class="subhead mb-3">Recent model mix versus earlier days in this range. Positive delta means the model is taking over.</div>
-        <table class="w-full text-sm">
-          <thead><tr class="text-slate-500 text-left">
-            <th>model</th>
-            <th class="text-right">recent share</th>
-            <th class="text-right">prior share</th>
-            <th class="text-right">delta</th>
-          </tr></thead>
-          <tbody id="analytics-model-drift"></tbody>
-        </table>
+        <div class="overflow-x-auto">
+          <table class="w-full text-sm">
+            <thead><tr class="text-slate-500 text-left">
+              <th>model</th>
+              <th class="text-right">recent share</th>
+              <th class="text-right">prior share</th>
+              <th class="text-right">delta</th>
+            </tr></thead>
+            <tbody id="analytics-model-drift"></tbody>
+          </table>
+        </div>
       </div>
       <div class="bg-white rounded shadow p-4">
         <h2 class="font-semibold mb-1">Cache health clinic</h2>
         <div class="subhead mb-3">Read-heavy cache is good. Write-heavy cache means you may be paying to populate prefixes that are not reused.</div>
-        <table class="w-full text-sm">
-          <thead><tr class="text-slate-500 text-left">
-            <th>model</th>
-            <th class="text-right">hit %</th>
-            <th class="text-right">read/write</th>
-            <th class="text-right">verdict</th>
-          </tr></thead>
-          <tbody id="analytics-cache-health"></tbody>
-        </table>
+        <div class="overflow-x-auto">
+          <table class="w-full text-sm">
+            <thead><tr class="text-slate-500 text-left">
+              <th>model</th>
+              <th class="text-right">hit %</th>
+              <th class="text-right">read/write</th>
+              <th class="text-right">verdict</th>
+            </tr></thead>
+            <tbody id="analytics-cache-health"></tbody>
+          </table>
+        </div>
       </div>
     </div>
 
-    <div class="grid grid-cols-2 gap-4">
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
       <div class="bg-white rounded shadow p-4">
         <h2 class="font-semibold mb-1">Off-hours oracle</h2>
         <div class="subhead mb-3">Night and weekend usage. Useful for finding hidden work rhythms and questionable life choices.</div>
@@ -666,15 +692,17 @@
       <div class="bg-white rounded shadow p-4">
         <h2 class="font-semibold mb-1">Host mix sanity</h2>
         <div class="subhead mb-3">Which machines are contributing spend. A surprise host here usually means sync/import behavior changed.</div>
-        <table class="w-full text-sm">
-          <thead><tr class="text-slate-500 text-left">
-            <th>host</th>
-            <th class="text-right">share</th>
-            <th class="text-right">turns</th>
-            <th class="text-right">$</th>
-          </tr></thead>
-          <tbody id="analytics-host-mix"></tbody>
-        </table>
+        <div class="overflow-x-auto">
+          <table class="w-full text-sm">
+            <thead><tr class="text-slate-500 text-left">
+              <th>host</th>
+              <th class="text-right">share</th>
+              <th class="text-right">turns</th>
+              <th class="text-right">$</th>
+            </tr></thead>
+            <tbody id="analytics-host-mix"></tbody>
+          </table>
+        </div>
       </div>
     </div>
   </section>
@@ -697,7 +725,7 @@
       </div>
     </div>
 
-    <div id="q-cards" class="grid grid-cols-4 gap-4"></div>
+    <div id="q-cards" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4"></div>
 
     <div class="bg-white rounded shadow p-4">
       <h2 class="font-semibold mb-1">How these ceilings moved over time</h2>
@@ -713,26 +741,30 @@
       </div>
     </div>
 
-    <div class="grid grid-cols-2 gap-4">
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
       <div class="bg-white rounded shadow p-4">
         <h2 class="font-semibold mb-3">Biggest 5-hour windows</h2>
-        <table class="w-full text-sm">
-          <thead><tr class="text-slate-500 text-left">
-            <th>started</th><th class="text-right">usage</th>
-            <th class="text-right">turns</th><th class="text-right">span (h)</th>
-          </tr></thead>
-          <tbody id="q-blocks-5h"></tbody>
-        </table>
+        <div class="overflow-x-auto">
+          <table class="w-full text-sm">
+            <thead><tr class="text-slate-500 text-left">
+              <th>started</th><th class="text-right">usage</th>
+              <th class="text-right">turns</th><th class="text-right">span (h)</th>
+            </tr></thead>
+            <tbody id="q-blocks-5h"></tbody>
+          </table>
+        </div>
       </div>
       <div class="bg-white rounded shadow p-4">
         <h2 class="font-semibold mb-3">Biggest weekly windows</h2>
-        <table class="w-full text-sm">
-          <thead><tr class="text-slate-500 text-left">
-            <th>started</th><th class="text-right">usage</th>
-            <th class="text-right">turns</th><th class="text-right">span (h)</th>
-          </tr></thead>
-          <tbody id="q-blocks-weekly"></tbody>
-        </table>
+        <div class="overflow-x-auto">
+          <table class="w-full text-sm">
+            <thead><tr class="text-slate-500 text-left">
+              <th>started</th><th class="text-right">usage</th>
+              <th class="text-right">turns</th><th class="text-right">span (h)</th>
+            </tr></thead>
+            <tbody id="q-blocks-weekly"></tbody>
+          </table>
+        </div>
       </div>
     </div>
 
