@@ -107,7 +107,7 @@ def _migrate_normalize_project_labels(conn) -> None:
         UPDATE turns
         SET project_label = COALESCE(
             NULLIF(
-                regexp_extract(rtrim(project_path, '/\'), '[^/\]+$', 0),
+                regexp_extract(rtrim(project_path, '/\'), '[^/\\]+$', 0),
                 ''
             ),
             '<root>'
@@ -116,7 +116,7 @@ def _migrate_normalize_project_labels(conn) -> None:
           AND project_path <> ''
           AND project_label <> COALESCE(
               NULLIF(
-                  regexp_extract(rtrim(project_path, '/\'), '[^/\]+$', 0),
+                  regexp_extract(rtrim(project_path, '/\'), '[^/\\]+$', 0),
                   ''
               ),
               '<root>'
