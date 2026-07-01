@@ -66,3 +66,29 @@ def test_render_template_is_nonempty_and_has_no_em_dash(loaded):
 def test_render_template_is_deterministic(loaded):
     brief = D.build_brief(loaded, since="all", host=None)
     assert D.render_template(brief, seed=42) == D.render_template(brief, seed=42)
+
+
+def test_narrate_falls_back_to_template_when_ollama_absent(loaded):
+    with patch.object(D, "ollama_status",
+                      return_value={"available": False, "url": "", "models": [], "model": None}):
+        out = D.narrate(loaded, since="all", host=None, engine="auto")
+    assert out["engine"] == "template"
+    assert out["empty"] is False
+    assert out["text"]
+
+
+def test_narrate_uses_ollama_when_available(loaded):
+    fake_status = {"available": True, "url": "u", "models": ["llama3.2"], "model": "llama3.2"}
+    with patch.object(D, "ollama_status", return_value=fake_status), \
+         patch.object(D, "render_ollama", return_value="A wry narration.") as ro:
+        out = D.narrate(loaded, since="all", host=None, engine="auto")
+    assert out["engine"] == "ollama"
+    assert out["model"] == "llama3.2"
+    assert out["text"] == "A wry narration."
+    ro.assert_called_once()
+
+
+def test_render_ollama_returns_none_on_http_error(loaded):
+    brief = D.build_brief(loaded, since="all", host=None)
+    with patch("urllib.request.urlopen", side_effect=OSError("down")):
+        assert D.render_ollama(brief, "llama3.2", "http://127.0.0.1:11434") is None

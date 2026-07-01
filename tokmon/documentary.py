@@ -160,3 +160,73 @@ def render_template(brief: DocBrief, seed: int = 0) -> str:
     ]))
 
     return "\n\n".join(beats).replace("—", ", ")
+
+
+SYSTEM_PROMPT = (
+    "You are Sir David Attenborough narrating a wildlife documentary about a "
+    "software developer, observed through their AI coding tool usage. Voice: "
+    "wry, affectionate, understated, present tense. Refer to the subject as "
+    "'the developer' or 'our subject'. Write five to seven short paragraphs "
+    "that weave the facts into narration rather than listing them. Never use "
+    "em dashes."
+)
+
+
+def _facts_text(brief: DocBrief) -> str:
+    lines = [
+        f"turns: {brief.turns}",
+        f"sessions: {brief.sessions}",
+        f"projects: {brief.projects}",
+        f"total spend: {_usd(brief.total_usd)}",
+        f"favourite model: {brief.dominant_model}",
+        f"busiest project: {brief.busiest_project} ({_usd(brief.busiest_project_usd)})",
+        f"most expensive turn: {brief.biggest_turn_model} in "
+        f"{brief.biggest_turn_project} for {_usd(brief.biggest_turn_usd)}"
+        + (f" at local hour {brief.biggest_turn_hour}" if brief.biggest_turn_hour is not None else ""),
+        f"cache saved: {_usd(brief.cache_saved_usd)} ({brief.cache_savings_pct:.0f}%)",
+        f"projected month end: {_usd(brief.projected_eom_usd)}",
+    ]
+    return "Facts about the subject's session:\n" + "\n".join(lines)
+
+
+def render_ollama(brief: DocBrief, model: str, url: str | None = None) -> str | None:
+    base = (url or OLLAMA_URL).rstrip("/")
+    payload = {
+        "model": model,
+        "stream": False,
+        "messages": [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": _facts_text(brief)},
+        ],
+    }
+    try:
+        req = urllib.request.Request(
+            base + "/api/chat",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(req, timeout=45) as r:
+            data = json.loads(r.read().decode("utf-8"))
+        text = data.get("message", {}).get("content", "").strip()
+    except Exception:
+        return None
+    text = text.replace("—", ", ")
+    return text or None
+
+
+def narrate(conn, since: str = "all", host: str | None = None,
+            engine: str = "auto", url: str | None = None,
+            model: str | None = None) -> dict:
+    brief = build_brief(conn, since=since, host=host)
+    if brief.empty:
+        return {"text": "", "engine": "template", "model": None, "empty": True}
+    if engine in ("auto", "ollama"):
+        status = ollama_status(url)
+        use_model = model or status.get("model")
+        if status["available"] and use_model:
+            text = render_ollama(brief, use_model, url)
+            if text:
+                return {"text": text, "engine": "ollama", "model": use_model, "empty": False}
+    seed = abs(hash((since, host or "", brief.turns))) % (2 ** 31)
+    return {"text": render_template(brief, seed), "engine": "template",
+            "model": None, "empty": False}
