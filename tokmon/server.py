@@ -54,6 +54,20 @@ def api_summary(since: str = Query("all"), host: str | None = Query(None)):
     return A.summary(conn, since=since, host=host)
 
 
+@app.get("/api/documentary")
+def api_documentary(since: str = Query("all"), host: str | None = Query(None),
+                    engine: str = Query("auto")):
+    from . import documentary as D
+    conn = _conn()
+    return D.narrate(conn, since=since, host=host, engine=engine)
+
+
+@app.get("/api/capabilities")
+def api_capabilities():
+    from . import documentary as D
+    return {"ollama": D.ollama_status()}
+
+
 @app.get("/api/spend")
 def api_spend(
     by: str = Query("project"),

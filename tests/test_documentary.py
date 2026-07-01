@@ -106,3 +106,22 @@ def test_narrate_template_engine_skips_ollama(loaded):
         out = D.narrate(loaded, since="all", host=None, engine="template")
     assert out["engine"] == "template"
     st.assert_not_called()
+
+
+def test_api_documentary_returns_template_payload(loaded):
+    loaded.close()  # release the write connection so the endpoint can open read-only
+    from tokmon import server
+    result = server.api_documentary(since="all", host=None, engine="template")
+    assert result["engine"] == "template"
+    assert result["empty"] is False
+    assert isinstance(result["text"], str) and result["text"]
+
+
+def test_api_capabilities_reports_ollama(loaded):
+    loaded.close()
+    from tokmon import server
+    with patch.object(D, "ollama_status",
+                      return_value={"available": False, "url": "u", "models": [], "model": None}):
+        result = server.api_capabilities()
+    assert "ollama" in result
+    assert result["ollama"]["available"] is False
