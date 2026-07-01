@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import os
+import random
 import urllib.request
 from dataclasses import dataclass
 from datetime import datetime
@@ -102,3 +103,60 @@ def build_brief(conn, since: str = "all", host: str | None = None,
         projected_eom_usd=float(forecast["projected_eom_usd"]),
         month_to_date_usd=float(forecast["month_to_date_usd"]),
     )
+
+
+def _usd(x: float) -> str:
+    return f"${x:,.2f}"
+
+
+def render_template(brief: DocBrief, seed: int = 0) -> str:
+    rnd = random.Random(seed)
+    model = brief.dominant_model or "an unidentified model"
+    project = brief.busiest_project or "an unnamed project"
+    beats: list[str] = []
+
+    beats.append(rnd.choice([
+        f"Here, in the pale glow of the terminal, we find the developer in its "
+        f"natural habitat. Across this period it produced {brief.turns} turns "
+        f"over {brief.sessions} sessions and {brief.projects} projects.",
+        f"Observe the developer at work. In this window it has generated "
+        f"{brief.turns} turns, spread across {brief.sessions} sessions and "
+        f"{brief.projects} distinct projects.",
+    ]))
+
+    beats.append(rnd.choice([
+        f"Its companion of choice is {model}, summoned again and again. The "
+        f"project {project} consumed the most of its attention, at "
+        f"{_usd(brief.busiest_project_usd)}.",
+        f"The developer favors {model} above all others. Most of its energy "
+        f"flows into {project}, which alone accounts for "
+        f"{_usd(brief.busiest_project_usd)}.",
+    ]))
+
+    if brief.biggest_turn_model:
+        hour = brief.biggest_turn_hour
+        when = ""
+        if hour is not None:
+            phase = "in the small hours" if hour < 6 else (
+                "under cover of night" if hour >= 22 else f"at the {hour}:00 hour")
+            when = f", {phase}"
+        beats.append(
+            f"Then comes the feeding frenzy. A single turn on "
+            f"{brief.biggest_turn_model}, in {brief.biggest_turn_project or 'the wild'}"
+            f"{when}, cost {_usd(brief.biggest_turn_usd)}. A remarkable display of appetite."
+        )
+
+    beats.append(
+        f"The reckoning. Over this window the developer spent "
+        f"{_usd(brief.total_usd)}. Caching spared it a further "
+        f"{_usd(brief.cache_saved_usd)}, some {brief.cache_savings_pct:.0f} percent "
+        f"of what it might have paid. At the current pace, the month will close "
+        f"near {_usd(brief.projected_eom_usd)}."
+    )
+
+    beats.append(rnd.choice([
+        "And so the cycle continues, as it does every day, in terminals the world over.",
+        "The sun sets on the workspace. Tomorrow, the developer will hunt again.",
+    ]))
+
+    return "\n\n".join(beats).replace("—", ", ")

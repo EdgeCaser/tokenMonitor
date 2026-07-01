@@ -53,3 +53,16 @@ def test_build_brief_has_core_facts(loaded):
     assert brief.dominant_model is not None
     assert brief.biggest_turn_model is not None
     assert brief.empty is False
+
+
+def test_render_template_is_nonempty_and_has_no_em_dash(loaded):
+    brief = D.build_brief(loaded, since="all", host=None)
+    text = D.render_template(brief, seed=1)
+    assert len(text) > 80
+    assert "—" not in text
+    assert f"{brief.turns}" in text
+
+
+def test_render_template_is_deterministic(loaded):
+    brief = D.build_brief(loaded, since="all", host=None)
+    assert D.render_template(brief, seed=42) == D.render_template(brief, seed=42)
