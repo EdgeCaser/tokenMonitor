@@ -56,10 +56,10 @@ def api_summary(since: str = Query("all"), host: str | None = Query(None)):
 
 @app.get("/api/documentary")
 def api_documentary(since: str = Query("all"), host: str | None = Query(None),
-                    engine: str = Query("auto")):
+                    engine: str | None = Query(None)):
     from . import documentary as D
     conn = _conn()
-    return D.narrate(conn, since=since, host=host, engine=engine)
+    return D.narrate(conn, since=since, host=host, engine=engine or D.DOC_ENGINE)
 
 
 @app.get("/api/capabilities")

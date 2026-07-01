@@ -2169,6 +2169,7 @@ async function loadDocumentary() {
   wrap.title = available ? "" : "requires a reachable Ollama host";
   wrap.classList.toggle("opacity-50", !available);
   wrap.classList.toggle("cursor-not-allowed", !available);
+  wrap.classList.toggle("cursor-pointer", available);
 }
 
 function renderDocBanner(ollama) {

@@ -8,6 +8,7 @@ import json
 import os
 import random
 import urllib.request
+import zlib
 from dataclasses import dataclass
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -178,10 +179,10 @@ def _facts_text(brief: DocBrief) -> str:
         f"sessions: {brief.sessions}",
         f"projects: {brief.projects}",
         f"total spend: {_usd(brief.total_usd)}",
-        f"favourite model: {brief.dominant_model}",
-        f"busiest project: {brief.busiest_project} ({_usd(brief.busiest_project_usd)})",
-        f"most expensive turn: {brief.biggest_turn_model} in "
-        f"{brief.biggest_turn_project} for {_usd(brief.biggest_turn_usd)}"
+        f"favourite model: {brief.dominant_model or 'an unidentified model'}",
+        f"busiest project: {brief.busiest_project or 'an unnamed project'} ({_usd(brief.busiest_project_usd)})",
+        f"most expensive turn: {brief.biggest_turn_model or 'an unidentified model'} in "
+        f"{brief.biggest_turn_project or 'an unnamed project'} for {_usd(brief.biggest_turn_usd)}"
         + (f" at local hour {brief.biggest_turn_hour}" if brief.biggest_turn_hour is not None else ""),
         f"cache saved: {_usd(brief.cache_saved_usd)} ({brief.cache_savings_pct:.0f}%)",
         f"projected month end: {_usd(brief.projected_eom_usd)}",
@@ -223,9 +224,9 @@ def unload_model(model: str, url: str | None = None) -> bool:
     immediate-unload-on-off behavior. Ollama unloads a model when it receives
     a request carrying keep_alive: 0.
     """
-    base = (url or OLLAMA_URL).rstrip("/")
-    payload = {"model": model, "keep_alive": 0}
     try:
+        base = (url or OLLAMA_URL).rstrip("/")
+        payload = {"model": model, "keep_alive": 0}
         req = urllib.request.Request(
             base + "/api/generate",
             data=json.dumps(payload).encode("utf-8"),
@@ -236,6 +237,15 @@ def unload_model(model: str, url: str | None = None) -> bool:
     except Exception:
         return False
     return True
+
+
+def _seed(since: str, host: str | None, turns: int) -> int:
+    """Deterministic template seed, stable across processes.
+
+    Uses crc32 rather than the builtin hash() (which is per-process
+    randomized) so phrasing is stable within a day and only varies by day.
+    """
+    return zlib.crc32(f"{since}|{host or ''}|{turns}".encode("utf-8")) % (2 ** 31)
 
 
 def narrate(conn, since: str = "all", host: str | None = None,
@@ -251,6 +261,6 @@ def narrate(conn, since: str = "all", host: str | None = None,
             text = render_ollama(brief, use_model, url)
             if text:
                 return {"text": text, "engine": "ollama", "model": use_model, "empty": False}
-    seed = abs(hash((since, host or "", brief.turns))) % (2 ** 31)
+    seed = _seed(since, host, brief.turns)
     return {"text": render_template(brief, seed), "engine": "template",
             "model": None, "empty": False}

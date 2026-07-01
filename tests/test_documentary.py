@@ -146,6 +146,10 @@ def test_render_ollama_sends_bounded_options(loaded):
     assert captured["body"]["options"]["num_predict"] == 500
     assert captured["body"]["options"]["num_ctx"] == 4096
     assert captured["body"]["keep_alive"] == "5m"
+    # unrelated payload keys must survive the bounding
+    assert captured["body"]["model"] == "m"
+    assert captured["body"]["stream"] is False
+    assert len(captured["body"]["messages"]) == 2
 
 
 def test_unload_model_posts_keep_alive_zero():
@@ -172,3 +176,27 @@ def test_unload_model_posts_keep_alive_zero():
 def test_unload_model_returns_false_and_never_raises_on_error():
     with patch("urllib.request.urlopen", side_effect=OSError("refused")):
         assert D.unload_model("llama3.2:3b", "http://x") is False
+
+
+def test_seed_is_stable_across_processes():
+    # crc32-based seed is deterministic (builtin hash() is per-process randomized).
+    assert D._seed("all", None, 42) == 480698661
+    assert D._seed("all", None, 42) == D._seed("all", None, 42)
+    assert D._seed("7d", "desktop", 5) != D._seed("7d", "desktop", 6)
+
+
+def test_narrate_empty_window_returns_gentle_payload(loaded):
+    # Real build_brief path (not mocked): a host with no turns yields the empty payload.
+    out = D.narrate(loaded, since="all", host="no-such-host", engine="template")
+    assert out == {"text": "", "engine": "template", "model": None, "empty": True}
+
+
+def test_api_documentary_default_engine_uses_doc_engine(loaded):
+    loaded.close()
+    from tokmon import server
+    # No engine query param -> falls back to configured TOKMON_DOC_ENGINE.
+    with patch.object(D, "DOC_ENGINE", "template"), \
+         patch.object(D, "ollama_status") as st:
+        result = server.api_documentary(since="all", host=None, engine=None)
+    assert result["engine"] == "template"
+    st.assert_not_called()
