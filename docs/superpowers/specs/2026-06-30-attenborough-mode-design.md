@@ -196,3 +196,12 @@ banks are authored without em dashes.
   Printer, each of which declares its own required capability.
 - **Share card.** A generated image of a documentary still with a subtitle line,
   for posting.
+
+## Addendum (2026-06-30): remote Ollama, never local on the Pi
+
+Deployment note: the dashboard host (a Raspberry Pi) must never run Ollama
+locally. Instead it polls a remote Ollama on a capable machine via
+`TOKMON_OLLAMA_URL`, with the template engine as the fallback when that machine
+is unreachable. Generation is bounded (`num_predict`) so it completes within the
+request timeout. UI copy must never instruct a user to install Ollama on the
+dashboard host.

@@ -24,7 +24,7 @@ def ollama_status(url: str | None = None) -> dict:
     """Probe the local Ollama server. Never raises."""
     base = (url or OLLAMA_URL).rstrip("/")
     try:
-        with urllib.request.urlopen(base + "/api/tags", timeout=1.5) as r:
+        with urllib.request.urlopen(base + "/api/tags", timeout=4.0) as r:
             data = json.loads(r.read().decode("utf-8"))
         models = [m["name"] for m in data.get("models", [])]
     except Exception:
@@ -195,6 +195,7 @@ def render_ollama(brief: DocBrief, model: str, url: str | None = None) -> str | 
         payload = {
             "model": model,
             "stream": False,
+            "options": {"num_predict": 500},
             "messages": [
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": _facts_text(brief)},
@@ -205,7 +206,7 @@ def render_ollama(brief: DocBrief, model: str, url: str | None = None) -> str | 
             data=json.dumps(payload).encode("utf-8"),
             headers={"Content-Type": "application/json"},
         )
-        with urllib.request.urlopen(req, timeout=45) as r:
+        with urllib.request.urlopen(req, timeout=120) as r:
             data = json.loads(r.read().decode("utf-8"))
         text = data.get("message", {}).get("content", "").strip()
     except Exception:

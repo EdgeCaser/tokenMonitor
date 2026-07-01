@@ -2159,18 +2159,15 @@ function renderDocBanner(ollama) {
   if (ollama && ollama.available) { el.innerHTML = ""; return; }
   el.innerHTML = `
     <div class="bg-amber-50 border border-amber-200 rounded p-3 text-sm flex flex-wrap items-center gap-3">
-      <span>You are in template mode. Install Ollama for richer narration.</span>
-      <button id="doc-copy" class="px-2 py-1 bg-white border rounded text-xs">Copy command</button>
+      <span>Template mode. Richer narration needs a reachable Ollama host (set TOKMON_OLLAMA_URL).</span>
       <button id="doc-recheck" class="px-2 py-1 bg-white border rounded text-xs">Check again</button>
     </div>`;
-  $("#doc-copy").addEventListener("click",
-    () => navigator.clipboard && navigator.clipboard.writeText("ollama pull llama3.2"));
   $("#doc-recheck").addEventListener("click", () => loadDocumentary());
 }
 
 async function rollFilm() {
   const out = $("#doc-output");
-  out.textContent = "Observing the specimen...";
+  out.textContent = "Observing the specimen... (rich narration can take up to a minute)";
   $("#doc-credit").textContent = "";
   try {
     const d = await api(`/api/documentary?since=${since()}${hostQ()}`);

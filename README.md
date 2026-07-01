@@ -311,6 +311,23 @@ from version control.
 
 ---
 
+## Richer narration (optional)
+
+The Documentary tab narrates your usage as a nature documentary. Out of the box
+it uses a built-in template engine that runs instantly and fully locally. If a
+machine on your network runs [Ollama](https://ollama.com), tokmon can use it for
+richer prose, falling back to the template whenever that machine is unreachable.
+
+Point tokmon at the Ollama host with an environment variable on the machine that
+runs the dashboard:
+
+    TOKMON_OLLAMA_URL=http://<ollama-host>:11434
+    TOKMON_OLLAMA_MODEL=<model-name>   # optional; defaults to the first model
+
+The Ollama host must listen on all interfaces so other machines can reach it
+(`OLLAMA_HOST=0.0.0.0` in its environment). Do not run a large model on a small
+device such as a Raspberry Pi; point the Pi at a capable machine instead.
+
 ## Development
 
 ```bash

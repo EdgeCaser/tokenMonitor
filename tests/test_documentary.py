@@ -125,3 +125,22 @@ def test_api_capabilities_reports_ollama(loaded):
         result = server.api_capabilities()
     assert "ollama" in result
     assert result["ollama"]["available"] is False
+
+
+def test_render_ollama_sends_bounded_options(loaded):
+    captured = {}
+
+    class FakeResp:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def read(self): return b'{"message": {"content": "A narration."}}'
+
+    def fake_urlopen(req, timeout=None):
+        captured["body"] = json.loads(req.data.decode("utf-8"))
+        return FakeResp()
+
+    brief = D.build_brief(loaded, since="all", host=None)
+    with patch("urllib.request.urlopen", side_effect=fake_urlopen):
+        out = D.render_ollama(brief, "m", "http://x")
+    assert out == "A narration."
+    assert captured["body"]["options"]["num_predict"] == 500
