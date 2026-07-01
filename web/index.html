@@ -726,7 +726,13 @@
           <h2 class="text-lg font-semibold">Attenborough Mode</h2>
           <p id="doc-range" class="text-sm text-slate-400"></p>
         </div>
-        <button id="doc-roll" class="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 rounded text-sm font-medium">Roll film</button>
+        <div class="flex items-center gap-4">
+          <label id="doc-live-wrap" class="flex items-center gap-2 text-sm text-slate-300 cursor-pointer select-none" title="requires a reachable Ollama host">
+            <input type="checkbox" id="doc-live" class="accent-emerald-500" disabled>
+            <span>Live narration (Ollama)</span>
+          </label>
+          <button id="doc-roll" class="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 rounded text-sm font-medium">Roll film</button>
+        </div>
       </div>
       <div id="doc-output" class="doc-subtitles">Press Roll film to narrate this window.</div>
       <p id="doc-credit" class="text-xs text-slate-500 mt-4"></p>
@@ -857,6 +863,9 @@ $("#spend-pan-right").addEventListener("click", () => panSpend(1));
 document.querySelectorAll("[data-preset]").forEach(b => b.addEventListener("click", () => runPreset(b.dataset.preset)));
 $("#copy-turn-query").addEventListener("click", () => copyCurrentTurnsApi());
 $("#doc-roll").addEventListener("click", rollFilm);
+$("#doc-live").addEventListener("change", (e) => {
+  localStorage.setItem("tokmon.docLive", e.target.checked ? "on" : "off");
+});
 
 // Format an instant as the "YYYY-MM-DDTHH:MM" datetime-local shape, expressed
 // as wall-clock time in CHART_TZ (so the pickers read in the same Pacific time
@@ -2152,6 +2161,14 @@ async function loadDocumentary() {
   let caps = { ollama: { available: false } };
   try { caps = await api("/api/capabilities"); } catch (e) { /* offline gate */ }
   renderDocBanner(caps.ollama);
+  const live = $("#doc-live");
+  const wrap = $("#doc-live-wrap");
+  const available = !!(caps.ollama && caps.ollama.available);
+  live.disabled = !available;
+  live.checked = available && localStorage.getItem("tokmon.docLive") === "on";
+  wrap.title = available ? "" : "requires a reachable Ollama host";
+  wrap.classList.toggle("opacity-50", !available);
+  wrap.classList.toggle("cursor-not-allowed", !available);
 }
 
 function renderDocBanner(ollama) {
@@ -2170,7 +2187,8 @@ async function rollFilm() {
   out.textContent = "Observing the specimen... (rich narration can take up to a minute)";
   $("#doc-credit").textContent = "";
   try {
-    const d = await api(`/api/documentary?since=${since()}${hostQ()}`);
+    const engine = ($("#doc-live") && $("#doc-live").checked) ? "ollama" : "template";
+    const d = await api(`/api/documentary?since=${since()}${hostQ()}&engine=${engine}`);
     if (d.empty) { out.textContent = "Nothing stirred in this period."; return; }
     out.textContent = d.text;
     $("#doc-credit").textContent = d.engine === "ollama"
