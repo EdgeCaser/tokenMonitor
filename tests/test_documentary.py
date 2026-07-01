@@ -146,3 +146,29 @@ def test_render_ollama_sends_bounded_options(loaded):
     assert captured["body"]["options"]["num_predict"] == 500
     assert captured["body"]["options"]["num_ctx"] == 4096
     assert captured["body"]["keep_alive"] == "5m"
+
+
+def test_unload_model_posts_keep_alive_zero():
+    captured = {}
+
+    class FakeResp:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def read(self): return b'{"done": true}'
+
+    def fake_urlopen(req, timeout=None):
+        captured["url"] = req.full_url
+        captured["body"] = json.loads(req.data.decode("utf-8"))
+        return FakeResp()
+
+    with patch("urllib.request.urlopen", side_effect=fake_urlopen):
+        ok = D.unload_model("llama3.2:3b", "http://x")
+    assert ok is True
+    assert captured["url"].endswith("/api/generate")
+    assert captured["body"]["model"] == "llama3.2:3b"
+    assert captured["body"]["keep_alive"] == 0
+
+
+def test_unload_model_returns_false_and_never_raises_on_error():
+    with patch("urllib.request.urlopen", side_effect=OSError("refused")):
+        assert D.unload_model("llama3.2:3b", "http://x") is False

@@ -216,6 +216,28 @@ def render_ollama(brief: DocBrief, model: str, url: str | None = None) -> str | 
     return text or None
 
 
+def unload_model(model: str, url: str | None = None) -> bool:
+    """Ask Ollama to evict a model from memory. Never raises.
+
+    Not wired to any route or the UI yet; this is the seam for a future
+    immediate-unload-on-off behavior. Ollama unloads a model when it receives
+    a request carrying keep_alive: 0.
+    """
+    base = (url or OLLAMA_URL).rstrip("/")
+    payload = {"model": model, "keep_alive": 0}
+    try:
+        req = urllib.request.Request(
+            base + "/api/generate",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(req, timeout=10) as r:
+            r.read()
+    except Exception:
+        return False
+    return True
+
+
 def narrate(conn, since: str = "all", host: str | None = None,
             engine: str = "auto", url: str | None = None,
             model: str | None = None) -> dict:
