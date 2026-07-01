@@ -190,16 +190,16 @@ def _facts_text(brief: DocBrief) -> str:
 
 
 def render_ollama(brief: DocBrief, model: str, url: str | None = None) -> str | None:
-    base = (url or OLLAMA_URL).rstrip("/")
-    payload = {
-        "model": model,
-        "stream": False,
-        "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": _facts_text(brief)},
-        ],
-    }
     try:
+        base = (url or OLLAMA_URL).rstrip("/")
+        payload = {
+            "model": model,
+            "stream": False,
+            "messages": [
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": _facts_text(brief)},
+            ],
+        }
         req = urllib.request.Request(
             base + "/api/chat",
             data=json.dumps(payload).encode("utf-8"),

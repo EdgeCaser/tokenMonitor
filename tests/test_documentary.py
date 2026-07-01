@@ -92,3 +92,17 @@ def test_render_ollama_returns_none_on_http_error(loaded):
     brief = D.build_brief(loaded, since="all", host=None)
     with patch("urllib.request.urlopen", side_effect=OSError("down")):
         assert D.render_ollama(brief, "llama3.2", "http://127.0.0.1:11434") is None
+
+
+def test_narrate_short_circuits_on_empty_brief(loaded):
+    from types import SimpleNamespace
+    with patch.object(D, "build_brief", return_value=SimpleNamespace(empty=True)):
+        out = D.narrate(loaded, since="all", host=None, engine="auto")
+    assert out == {"text": "", "engine": "template", "model": None, "empty": True}
+
+
+def test_narrate_template_engine_skips_ollama(loaded):
+    with patch.object(D, "ollama_status") as st:
+        out = D.narrate(loaded, since="all", host=None, engine="template")
+    assert out["engine"] == "template"
+    st.assert_not_called()
