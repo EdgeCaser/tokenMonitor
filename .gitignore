@@ -13,3 +13,4 @@ tokmon.duckdb.wal
 htmlcov/
 dist/
 build/
+.playwright-mcp/

@@ -2,6 +2,17 @@
 
 Local analytics for Claude Code token usage.
 
+![tokmon dashboard overview](docs/dashboard-overview.png)
+
+<details>
+<summary><b>See the deep-dive analytics view</b></summary>
+
+![tokmon analytics](docs/dashboard-analytics.png)
+
+</details>
+
+> The screenshots above use synthetic sample data, not real usage.
+
 `tokmon` reads the transcript files that Claude Code already writes to your
 computer, loads the usage data into a small local database, and gives you a
 clean web dashboard and command-line reports showing where your tokens (and
