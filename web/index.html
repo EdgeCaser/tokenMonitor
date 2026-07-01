@@ -55,6 +55,15 @@
     overflow: hidden;
     line-height: 1.1;
   }
+  .doc-subtitles {
+    font-family: Georgia, "Times New Roman", serif;
+    font-size: 1.05rem;
+    line-height: 1.9;
+    text-align: center;
+    max-width: 46rem;
+    margin: 0 auto;
+    white-space: pre-wrap;
+  }
 </style>
 </head>
 <body class="bg-slate-50 text-slate-900">
@@ -110,6 +119,7 @@
     <button class="tab px-3 py-2 rounded-t text-sm font-medium whitespace-nowrap flex-shrink-0" data-tab="turns">Turns</button>
     <button class="tab px-3 py-2 rounded-t text-sm font-medium whitespace-nowrap flex-shrink-0" data-tab="spend">Spend</button>
     <button class="tab px-3 py-2 rounded-t text-sm font-medium whitespace-nowrap flex-shrink-0" data-tab="analytics">Analytics</button>
+    <button class="tab px-3 py-2 rounded-t text-sm font-medium whitespace-nowrap flex-shrink-0" data-tab="documentary">Documentary</button>
     <button class="tab px-3 py-2 rounded-t text-sm font-medium whitespace-nowrap flex-shrink-0" data-tab="quotas">Quotas</button>
   </nav>
 
@@ -707,6 +717,22 @@
     </div>
   </section>
 
+  <!-- DOCUMENTARY -->
+  <section data-pane="documentary" class="hidden space-y-4">
+    <div id="doc-banner"></div>
+    <div class="bg-slate-900 text-slate-100 rounded shadow p-6">
+      <div class="flex items-center justify-between mb-4 gap-4">
+        <div>
+          <h2 class="text-lg font-semibold">Attenborough Mode</h2>
+          <p id="doc-range" class="text-sm text-slate-400"></p>
+        </div>
+        <button id="doc-roll" class="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 rounded text-sm font-medium">Roll film</button>
+      </div>
+      <div id="doc-output" class="doc-subtitles">Press Roll film to narrate this window.</div>
+      <p id="doc-credit" class="text-xs text-slate-500 mt-4"></p>
+    </div>
+  </section>
+
   <!-- QUOTAS -->
   <section data-pane="quotas" class="hidden space-y-4">
     <div class="bg-white rounded shadow p-4">
@@ -830,6 +856,7 @@ $("#spend-pan-left").addEventListener("click", () => panSpend(-1));
 $("#spend-pan-right").addEventListener("click", () => panSpend(1));
 document.querySelectorAll("[data-preset]").forEach(b => b.addEventListener("click", () => runPreset(b.dataset.preset)));
 $("#copy-turn-query").addEventListener("click", () => copyCurrentTurnsApi());
+$("#doc-roll").addEventListener("click", rollFilm);
 
 // Format an instant as the "YYYY-MM-DDTHH:MM" datetime-local shape, expressed
 // as wall-clock time in CHART_TZ (so the pickers read in the same Pacific time
@@ -997,6 +1024,7 @@ async function load(tab) {
   if (tab === "turns")      await loadTurns();
   if (tab === "spend")      await loadSpend();
   if (tab === "analytics")  await loadAnalytics();
+  if (tab === "documentary") await loadDocumentary();
   if (tab === "quotas")     await loadQuotas();
 }
 
@@ -2114,6 +2142,46 @@ function quotaBlocksRows(blocks, metric) {
        <td class="text-right num">${fmtInt(b.n_turns)}</td>
        <td class="text-right num">${(b.duration_hours ?? 0).toFixed(1)}</td>
      </tr>`).join("");
+}
+
+async function loadDocumentary() {
+  const sinceSel = $("#since");
+  const sinceText = sinceSel && sinceSel.selectedOptions.length
+    ? sinceSel.selectedOptions[0].textContent : "all time";
+  $("#doc-range").textContent = `narrating: ${host() || "all hosts"}, ${sinceText}`;
+  let caps = { ollama: { available: false } };
+  try { caps = await api("/api/capabilities"); } catch (e) { /* offline gate */ }
+  renderDocBanner(caps.ollama);
+}
+
+function renderDocBanner(ollama) {
+  const el = $("#doc-banner");
+  if (ollama && ollama.available) { el.innerHTML = ""; return; }
+  el.innerHTML = `
+    <div class="bg-amber-50 border border-amber-200 rounded p-3 text-sm flex flex-wrap items-center gap-3">
+      <span>You are in template mode. Install Ollama for richer narration.</span>
+      <button id="doc-copy" class="px-2 py-1 bg-white border rounded text-xs">Copy command</button>
+      <button id="doc-recheck" class="px-2 py-1 bg-white border rounded text-xs">Check again</button>
+    </div>`;
+  $("#doc-copy").addEventListener("click",
+    () => navigator.clipboard && navigator.clipboard.writeText("ollama pull llama3.2"));
+  $("#doc-recheck").addEventListener("click", () => loadDocumentary());
+}
+
+async function rollFilm() {
+  const out = $("#doc-output");
+  out.textContent = "Observing the specimen...";
+  $("#doc-credit").textContent = "";
+  try {
+    const d = await api(`/api/documentary?since=${since()}${hostQ()}`);
+    if (d.empty) { out.textContent = "Nothing stirred in this period."; return; }
+    out.textContent = d.text;
+    $("#doc-credit").textContent = d.engine === "ollama"
+      ? `narrated by Ollama (${d.model})`
+      : "narrated by the local template engine";
+  } catch (e) {
+    out.textContent = "The documentary could not be filmed. " + e.message;
+  }
 }
 
 async function loadQuotas() {
