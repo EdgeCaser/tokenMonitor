@@ -195,7 +195,8 @@ def render_ollama(brief: DocBrief, model: str, url: str | None = None) -> str | 
         payload = {
             "model": model,
             "stream": False,
-            "options": {"num_predict": 500},
+            "keep_alive": "5m",
+            "options": {"num_predict": 500, "num_ctx": 4096},
             "messages": [
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": _facts_text(brief)},

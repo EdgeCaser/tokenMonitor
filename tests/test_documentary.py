@@ -144,3 +144,5 @@ def test_render_ollama_sends_bounded_options(loaded):
         out = D.render_ollama(brief, "m", "http://x")
     assert out == "A narration."
     assert captured["body"]["options"]["num_predict"] == 500
+    assert captured["body"]["options"]["num_ctx"] == 4096
+    assert captured["body"]["keep_alive"] == "5m"
