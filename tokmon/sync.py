@@ -37,9 +37,16 @@ def _no_window_kwargs() -> dict:
     its own console window on the desktop. CREATE_NO_WINDOW runs the console
     child with no window while still inheriting stdout/stderr, so manual
     `tokmon push` runs in a terminal keep showing output. No-op on POSIX.
+
+    stdin is pinned to DEVNULL alongside it: without a console, there's no
+    valid console stdin handle to inherit, and the MSYS2 rsync's nested `-e
+    ssh` child corrupts the rsync protocol stream trying to duplicate that
+    handle (rsync exit 12) rather than failing cleanly. An explicit DEVNULL
+    sidesteps the bad handle.
     """
     if os.name == "nt":
-        return {"creationflags": subprocess.CREATE_NO_WINDOW}
+        return {"creationflags": subprocess.CREATE_NO_WINDOW,
+                 "stdin": subprocess.DEVNULL}
     return {}
 
 
@@ -158,11 +165,25 @@ def _ensure_remote_dir(target: SyncTarget, verbose: bool = False) -> int:
     """Pre-create the remote destination directory via SSH.
 
     Works around macOS's bundled rsync 2.6.9 not supporting --mkpath.
+
+    ConnectTimeout/ServerAlive options and a hard subprocess timeout guard
+    against a mid-handshake connection reset (e.g. a Tailscale coordination
+    outage) leaving this ssh hung indefinitely — a hang here blocks every
+    subsequent scheduled push forever, since the parent process keeps the
+    redirected sync.log handle open the whole time.
     """
-    cmd = ["ssh", target.ssh_dest, f"mkdir -p {target.remote_root}"]
+    cmd = ["ssh",
+           "-o", "ConnectTimeout=10",
+           "-o", "ServerAliveInterval=5",
+           "-o", "ServerAliveCountMax=2",
+           target.ssh_dest, f"mkdir -p {target.remote_root}"]
     if verbose:
         print("running:", " ".join(cmd), file=sys.stderr)
-    return subprocess.run(cmd, **_no_window_kwargs()).returncode
+    try:
+        return subprocess.run(cmd, timeout=30, **_no_window_kwargs()).returncode
+    except subprocess.TimeoutExpired:
+        print("tokmon push: ssh mkdir timed out after 30s", file=sys.stderr)
+        return 124
 
 
 def push(
