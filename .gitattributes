@@ -1,0 +1,14 @@
+# Pin line endings so a Windows machine editing files through OneDrive can't
+# inject CRLF churn. All text files are stored and checked out with LF.
+* text=auto eol=lf
+
+# Binary types: never normalize.
+*.png    binary
+*.gif    binary
+*.ico    binary
+*.jpg    binary
+*.jpeg   binary
+*.duckdb binary
+*.zip    binary
+*.woff   binary
+*.woff2  binary
