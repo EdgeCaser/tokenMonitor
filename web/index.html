@@ -87,6 +87,8 @@
       <label class="text-sm text-slate-600">since</label>
       <select id="since" class="border rounded px-2 py-1 text-sm bg-white">
         <option value="all">all time</option>
+        <option value="today">today</option>
+        <option value="yesterday">yesterday</option>
         <option value="30d">30d</option>
         <option value="7d">7d</option>
         <option value="24h">24h</option>
@@ -927,7 +929,20 @@ function currentTab() {
 // The active time window as a server-side `since` value: a preset shorthand,
 // or "<start>..<end>" (either side may be blank) when a custom range is set.
 const since = () => {
-  if ($("#since").value !== "custom") return $("#since").value;
+  const v = $("#since").value;
+  // "today"/"yesterday" are calendar days in the chart timezone (Pacific),
+  // expressed as a `<start>..<end>` window the same way custom ranges are.
+  if (v === "today" || v === "yesterday") {
+    const today = toChartTzInput(new Date()).slice(0, 10);   // "YYYY-MM-DD" in Pacific
+    const midnight = day => chartTzWallToUtc(day + "T00:00");
+    if (v === "today") return `${midnight(today)}..`;        // midnight today → now
+    const [y, m, d] = today.split("-").map(Number);
+    const prev = new Date(Date.UTC(y, m - 1, d));
+    prev.setUTCDate(prev.getUTCDate() - 1);
+    const yest = prev.toISOString().slice(0, 10);
+    return `${midnight(yest)}..${midnight(today)}`;           // yesterday's full day
+  }
+  if (v !== "custom") return v;
   const f = chartTzWallToUtc($("#since-from").value);
   const t = chartTzWallToUtc($("#since-to").value);
   if (!f && !t) return "all";
