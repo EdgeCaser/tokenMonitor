@@ -107,6 +107,11 @@
         <button id="since-apply"
                 class="bg-slate-800 text-white rounded px-3 py-1 text-sm w-full sm:w-auto">apply</button>
       </div>
+      <label class="text-sm text-slate-600 flex items-center gap-1.5 cursor-pointer"
+             title="Overlay the previous equal-length window (e.g. this 24h vs the 24h before it) on the Overview chart and headline tiles.">
+        <input id="compare-prev" type="checkbox" class="align-middle" />
+        compare vs previous
+      </label>
     </div>
   </header>
 
@@ -134,6 +139,7 @@
           <span class="tip" data-tip="What: total Claude assistant responses (one per round-trip).&#10;Why care: Volume gauge. Combine with sessions to get turns-per-session — high values mean deep focused work, low values mean quick check-ins.">?</span>
         </div>
         <div id="t-turns" class="num text-3xl font-bold">—</div>
+        <div id="t-turns-delta" class="text-xs mt-1 h-4"></div>
       </div>
       <div class="bg-white rounded shadow p-4">
         <div class="text-xs uppercase text-slate-500">
@@ -141,6 +147,7 @@
           <span class="tip" data-tip="What: distinct Claude Code conversations (one per `claude` invocation).&#10;Why care: How often you reach for Claude. Spread across a few long sessions or many short ones tells you about your usage style.">?</span>
         </div>
         <div id="t-sessions" class="num text-3xl font-bold">—</div>
+        <div id="t-sessions-delta" class="text-xs mt-1 h-4"></div>
       </div>
       <div class="bg-white rounded shadow p-4">
         <div class="text-xs uppercase text-slate-500">
@@ -148,6 +155,7 @@
           <span class="tip" data-tip="What: cumulative $ at published Anthropic per-million-token rates (Opus $5/$25, Sonnet $3/$15, Haiku $1/$5, cache write 1.25–2×, cache read 0.1×).&#10;Why care: This is what your usage would have cost at list prices. Compare with how much you actually pay if you're on a plan.">?</span>
         </div>
         <div id="t-spend" class="num text-3xl font-bold text-emerald-700">—</div>
+        <div id="t-spend-delta" class="text-xs mt-1 h-4"></div>
       </div>
       <div class="bg-white rounded shadow p-4">
         <div class="text-xs uppercase text-slate-500">
@@ -155,6 +163,7 @@
           <span class="tip" data-tip="What: input + output + cache write + cache read tokens.&#10;Why care: The true volume of context Claude handled, including cached context that was reused cheaply.">?</span>
         </div>
         <div id="t-tokens" class="num text-3xl font-bold text-sky-700">—</div>
+        <div id="t-tokens-delta" class="text-xs mt-1 h-4"></div>
       </div>
       <div class="bg-emerald-50 rounded shadow p-4 border border-emerald-200">
         <div class="text-xs uppercase text-emerald-700">
@@ -868,6 +877,11 @@ $("#doc-roll").addEventListener("click", rollFilm);
 $("#doc-live").addEventListener("change", (e) => {
   localStorage.setItem("tokmon.docLive", e.target.checked ? "on" : "off");
 });
+$("#compare-prev").checked = localStorage.getItem("tokmon.comparePrev") === "on";
+$("#compare-prev").addEventListener("change", (e) => {
+  localStorage.setItem("tokmon.comparePrev", e.target.checked ? "on" : "off");
+  load(currentTab());
+});
 
 // Format an instant as the "YYYY-MM-DDTHH:MM" datetime-local shape, expressed
 // as wall-clock time in CHART_TZ (so the pickers read in the same Pacific time
@@ -1012,6 +1026,109 @@ function fmtBucketLabel(s) {
   return s.slice(5);
 }
 
+// Resolve a `since()` value to its [start, end) instants (UTC Date objects).
+// `start` is null for open-ended / all-time windows (not densifiable). `end`
+// defaults to "now" when the window has no explicit upper bound.
+function windowBounds(s) {
+  const now = new Date();
+  if (!s || s === "all") return { start: null, end: now };
+  const m = /^(\d+)([dhm])$/.exec(s);
+  if (m) {
+    const n = +m[1];
+    const ms = { d: 86400000, h: 3600000, m: 60000 }[m[2]] * n;
+    return { start: new Date(now - ms), end: now };
+  }
+  if (s.includes("..")) {
+    const [a, b] = s.split("..");
+    return { start: a ? parseAsUtc(a) : null, end: b ? parseAsUtc(b) : now };
+  }
+  return { start: parseAsUtc(s), end: now };  // bare "since <point>"
+}
+
+// The equal-length window immediately preceding `s`, as a naive-UTC
+// "<start>..<end>" range the server can filter on. Null when `s` has no fixed
+// start (all-time / open-ended), so there's nothing to compare against.
+function previousSince(s) {
+  const b = windowBounds(s);
+  if (!b.start) return null;
+  const len = b.end - b.start;
+  const iso = d => d.toISOString().slice(0, 19);   // naive UTC, no "Z"
+  return `${iso(new Date(b.start - len))}..${iso(b.start)}`;
+}
+
+// Comparison descriptor for the current selection: the previous-window `since`
+// plus a short human label ("prev 24h", "yesterday to-date", …). Null when the
+// window can't be compared (all-time / open start).
+function compareMeta() {
+  if (!$("#compare-prev").checked) return null;
+  const prevSince = previousSince(since());
+  if (!prevSince) return null;
+  const sel = $("#since").value;
+  let label = "prev period";
+  if (/^\d+[dhm]$/.test(sel)) label = "prev " + sel;
+  else if (sel === "today") label = "yesterday to-date";
+  else if (sel === "yesterday") label = "prev day";
+  return { prevSince, label };
+}
+
+// Every bucket key between [start, end) at the given granularity, in the chart
+// timezone and in the exact string format the server emits — so idle buckets
+// zero-fill instead of collapsing the time axis. Hour keys look like
+// "YYYY-MM-DDTHH:00:00"; day keys look like "YYYY-MM-DD".
+function denseBuckets(start, end, bucket) {
+  if (!start || !end || end <= start) return null;
+  const out = [];
+  const seen = new Set();
+  if (bucket === "hour") {
+    // LA is a whole-hour offset, so stepping UTC hour-by-hour and truncating to
+    // the chart-tz wall hour yields each local hour exactly once (dedup guards
+    // the twice-yearly DST fold).
+    const t0 = new Date(start); t0.setUTCMinutes(0, 0, 0);
+    for (let t = t0.getTime(); t < end.getTime(); t += 3600000) {
+      const key = toChartTzInput(new Date(t)).slice(0, 13) + ":00:00";
+      if (!seen.has(key)) { seen.add(key); out.push(key); }
+    }
+  } else {
+    // Walk calendar days in the chart tz by their date label (DST-proof: labels
+    // are wall-clock dates, not fixed-length spans).
+    let key = toChartTzInput(start).slice(0, 10);
+    const endKey = toChartTzInput(new Date(end - 1)).slice(0, 10);
+    let [y, mo, d] = key.split("-").map(Number);
+    let guard = 0;
+    while (key <= endKey && guard++ < 4000) {
+      out.push(key);
+      const nd = new Date(Date.UTC(y, mo - 1, d + 1));
+      y = nd.getUTCFullYear(); mo = nd.getUTCMonth() + 1; d = nd.getUTCDate();
+      key = `${y}-${String(mo).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+    }
+  }
+  return out;
+}
+
+// Render a period-over-period delta badge into `el`. `neutral` mutes the
+// up/down coloring for volume metrics where "more" isn't inherently good or bad.
+function renderDelta(el, cur, prev, label, { neutral = false } = {}) {
+  if (!el) return;
+  if (prev == null) { el.textContent = ""; return; }
+  cur = Number(cur || 0); prev = Number(prev || 0);
+  if (prev === 0 && cur === 0) { el.textContent = ""; return; }
+  const up = cur >= prev;
+  const arrow = up ? "▲" : "▼";
+  const pct = prev === 0 ? null : Math.abs((cur - prev) / prev) * 100;
+  const magnitude = pct == null ? "new" : `${pct.toFixed(pct < 10 ? 1 : 0)}%`;
+  const color = neutral ? "text-slate-500"
+    : (up ? "text-rose-600" : "text-emerald-600");
+  el.className = `text-xs mt-1 h-4 ${color}`;
+  el.textContent = `${arrow} ${magnitude} vs ${label}`;
+}
+
+function clearDeltas() {
+  ["turns", "sessions", "spend", "tokens"].forEach(k => {
+    const el = $("#t-" + k + "-delta");
+    if (el) { el.textContent = ""; el.className = "text-xs mt-1 h-4"; }
+  });
+}
+
 // Make the chart canvas wider than its container so wrapper scrolls horizontally.
 // 30 px per data point is a comfortable minimum for hourly bars.
 function fitChartWidth(wrapEl, nPoints) {
@@ -1145,8 +1262,10 @@ function axisMetric(v, metric) {
   return fmtInt(v);
 }
 
-function pivotSeries(rows, metric = "usd") {
-  const labels = [...new Set(rows.map(r => r.bucket))];
+function pivotSeries(rows, metric = "usd", allLabels = null) {
+  // `allLabels` (optional) forces a dense/continuous bucket axis so idle
+  // buckets appear as zeros instead of being dropped and compressing the axis.
+  const labels = allLabels || [...new Set(rows.map(r => r.bucket))];
   const series = [...new Set(rows.map(r => r.series || "total"))];
   const byKey = new Map(rows.map(r => [`${r.bucket}\u0000${r.series || "total"}`, r]));
   const datasets = series.map((name, i) => ({
@@ -1161,9 +1280,9 @@ function pivotSeries(rows, metric = "usd") {
   return { labels: labels.map(fmtBucketLabel), rawLabels: labels, datasets };
 }
 
-function renderTimeSeriesChart(name, canvas, rows, { stacked = false, type = "bar", legend = true, metric = "usd" } = {}) {
+function renderTimeSeriesChart(name, canvas, rows, { stacked = false, type = "bar", legend = true, metric = "usd", labels: labelsOverride = null } = {}) {
   destroyChart(name);
-  const { labels, datasets } = pivotSeries(rows, metric);
+  const { labels, datasets } = pivotSeries(rows, metric, labelsOverride);
   charts[name] = new Chart(canvas, {
     type,
     data: { labels, datasets },
@@ -1197,12 +1316,13 @@ function fitSingleLineText(selector = ".fit-card-value") {
   });
 }
 
-async function spendSeries(bucket, stack, { limit = 365, seriesLimit = 12 } = {}) {
+async function spendSeries(bucket, stack, { limit = 365, seriesLimit = 12, sinceOverride = null } = {}) {
+  const sinceVal = sinceOverride != null ? sinceOverride : since();
   try {
-    return await api(`/api/spend_timeseries?bucket=${bucket}&stack=${stack}&since=${since()}&limit=${limit}&series_limit=${seriesLimit}${hostQ()}${tzQ()}`);
+    return await api(`/api/spend_timeseries?bucket=${bucket}&stack=${stack}&since=${sinceVal}&limit=${limit}&series_limit=${seriesLimit}${hostQ()}${tzQ()}`);
   } catch (e) {
     if (stack !== "none" || !["hour", "day"].includes(bucket)) throw e;
-    const rows = await api(`/api/spend?by=${bucket}&since=${since()}&limit=${limit}${hostQ()}`);
+    const rows = await api(`/api/spend?by=${bucket}&since=${sinceVal}&limit=${limit}${hostQ()}`);
     rows.reverse();
     return rows.map(r => ({
       bucket: r[bucket],
@@ -1433,17 +1553,32 @@ function renderHeatmap(rows) {
   el.setAttribute("height", topPad + 7 * cellH + 4);
 }
 
+function summaryTokens(s) {
+  return Number(s.input_tokens || 0) + Number(s.output_tokens || 0) +
+    Number(s.cache_write_5m || 0) + Number(s.cache_write_1h || 0) +
+    Number(s.cache_read || 0);
+}
+
 async function loadOverview() {
+  const cmp = compareMeta();
   const s = await api(`/api/summary?since=${since()}${hostQ()}`);
   $("#t-turns").textContent    = fmtInt(s.turns);
   $("#t-sessions").textContent = fmtInt(s.sessions);
   $("#t-projects").textContent = fmtInt(s.projects);
   $("#t-spend").textContent    = fmtUsd(s.total_usd);
-  $("#t-tokens").textContent   = fmtTokenShort(
-    Number(s.input_tokens || 0) + Number(s.output_tokens || 0) +
-    Number(s.cache_write_5m || 0) + Number(s.cache_write_1h || 0) +
-    Number(s.cache_read || 0)
-  );
+  $("#t-tokens").textContent   = fmtTokenShort(summaryTokens(s));
+
+  // Period-over-period deltas on the headline tiles.
+  if (cmp) {
+    api(`/api/summary?since=${cmp.prevSince}${hostQ()}`).then(p => {
+      renderDelta($("#t-turns-delta"),    s.turns,          p.turns,          cmp.label, { neutral: true });
+      renderDelta($("#t-sessions-delta"), s.sessions,       p.sessions,       cmp.label, { neutral: true });
+      renderDelta($("#t-spend-delta"),    s.total_usd,      p.total_usd,      cmp.label);
+      renderDelta($("#t-tokens-delta"),   summaryTokens(s), summaryTokens(p), cmp.label, { neutral: true });
+    }).catch(() => clearDeltas());
+  } else {
+    clearDeltas();
+  }
 
   // Cache savings + burn rate tiles fire in parallel
   api(`/api/cache_savings?since=${since()}${hostQ()}`).then(cs => {
@@ -1496,18 +1631,51 @@ async function loadOverview() {
 
   const bucket = autoBucket();
   const rows = await spendSeries(bucket, "host", { limit: autoBucketLimit(), seriesLimit: 12 });
-  const nBuckets = new Set(rows.map(r => r.bucket)).size;
-  fitChartWidth($("#chart-daily-wrap"), nBuckets);
+  // Zero-fill idle buckets across the whole window so the time axis stays
+  // continuous (e.g. a full 24 hourly slots) instead of collapsing to only the
+  // hours that happened to have spend.
+  const bounds = windowBounds(since());
+  const denseLabels = denseBuckets(bounds.start, bounds.end, bucket)
+    || [...new Set(rows.map(r => r.bucket))];
+  fitChartWidth($("#chart-daily-wrap"), denseLabels.length);
   renderTimeSeriesChart("daily", $("#chart-daily"), rows, {
     type: "line",
     stacked: true,
     legend: true,
+    labels: denseLabels,
   });
   charts.daily.data.datasets.forEach((ds, i) => {
     ds.fill = i === 0 ? "origin" : "-1";
     ds.tension = 0.25;
     ds.pointRadius = 1.5;
   });
+
+  // Previous-period overlay: a single dashed "total" ghost line from the prior
+  // equal-length window, aligned bucket-for-bucket to the current axis.
+  if (cmp) {
+    try {
+      const prevRows = await spendSeries(bucket, "none",
+        { limit: autoBucketLimit(), seriesLimit: 1, sinceOverride: cmp.prevSince });
+      const pb = windowBounds(cmp.prevSince);
+      const prevLabels = denseBuckets(pb.start, pb.end, bucket) || [];
+      const byBucket = new Map(prevRows.map(r => [r.bucket, Number(r.usd || 0)]));
+      const prevData = prevLabels.map(b => byBucket.get(b) || 0);
+      // Align by offset (bucket i of prev under bucket i of current).
+      const data = denseLabels.map((_, i) => i < prevData.length ? prevData[i] : null);
+      charts.daily.data.datasets.push({
+        label: cmp.label,
+        data,
+        type: "line",
+        stack: "cmp",            // own stack group → not summed into the host areas
+        borderColor: "rgba(100,116,139,0.9)",
+        borderDash: [6, 4],
+        borderWidth: 1.5,
+        pointRadius: 0,
+        fill: false,
+        tension: 0.25,           // pushed last → drawn on top of the stacked areas
+      });
+    } catch (e) { /* comparison is best-effort; leave the base chart intact */ }
+  }
   charts.daily.update();
   // Update the chart heading (target the line-chart h2 specifically, not the
   // first h2 in Overview which is now the Forecast card).
