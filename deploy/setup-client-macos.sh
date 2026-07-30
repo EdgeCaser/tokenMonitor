@@ -4,8 +4,13 @@
 #   - installs launchd plist that runs `tokmon push` every 10 min
 #   - kicks off one push right now
 #
-# Requires tokmon to be importable (e.g., `pip install -e .` in a venv that's
-# already on PATH, or installed via `uv tool install tokmon`).
+# Requires tokmon to be importable from a location launchd can read. macOS TCC
+# blocks launchd from ~/Documents, ~/Desktop and ~/Downloads, so if this repo
+# lives in one of those, do NOT use a repo-local venv or an editable install.
+# Both leave the scheduled push failing on every run. Instead:
+#   python3 -m venv ~/.local/venvs/tokmon
+#   ~/.local/venvs/tokmon/bin/pip install /path/to/tokenMonitor   # not -e
+# The check in step 1 enforces this rather than letting it fail silently.
 #
 # Env vars (required if no flags):
 #   TOKMON_PI_USER
@@ -57,10 +62,49 @@ if [ -z "$TOKMON_BIN" ] || [ ! -x "$TOKMON_BIN" ]; then
     c_red "  Expected at: $REPO_ROOT/.venv/bin/tokmon"
     c_red "  Or on PATH (activate venv: source .venv/bin/activate)."
     c_red "  To create the venv:"
-    c_red "    cd $REPO_ROOT && python3 -m venv .venv && .venv/bin/pip install -e ."
+    c_red "    python3 -m venv ~/.local/venvs/tokmon"
+    c_red "    ~/.local/venvs/tokmon/bin/pip install $REPO_ROOT"
     exit 1
 fi
 c_blue "  tokmon: $TOKMON_BIN ✓"
+
+# launchd cannot read ~/Documents, ~/Desktop or ~/Downloads (macOS TCC). A plist
+# pointing into one of them bootstraps fine and then fails every single run with
+# PermissionError on pyvenv.cfg, logging nothing useful, so refuse up front.
+# Check the package source as well as the launcher: an editable install puts the
+# binary outside Documents while still importing from the repo inside it.
+resolve_path() {
+    python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$1" 2>/dev/null \
+        || printf '%s\n' "$1"
+}
+
+tcc_blocked() {
+    case "$1" in
+        "$HOME"/Documents/*|"$HOME"/Desktop/*|"$HOME"/Downloads/*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+TOKMON_SRC=""
+if [ -x "$(dirname "$TOKMON_BIN")/python" ]; then
+    TOKMON_SRC="$("$(dirname "$TOKMON_BIN")/python" \
+        -c 'import os,tokmon; print(os.path.dirname(tokmon.__file__))' 2>/dev/null || true)"
+fi
+
+for candidate in "$TOKMON_BIN" "$TOKMON_SRC"; do
+    [ -n "$candidate" ] || continue
+    if tcc_blocked "$(resolve_path "$candidate")"; then
+        c_red "Refusing to install: $candidate is under a TCC-protected folder."
+        c_red "  launchd cannot read ~/Documents, ~/Desktop or ~/Downloads, so the"
+        c_red "  scheduled 'tokmon push' would fail on every run."
+        c_red "  Install somewhere launchd can read, using a regular (non-editable)"
+        c_red "  install so no source is loaded from the repo at runtime:"
+        c_red "    python3 -m venv ~/.local/venvs/tokmon"
+        c_red "    ~/.local/venvs/tokmon/bin/pip install $REPO_ROOT"
+        c_red "  Then re-run this script with that venv's tokmon first on PATH."
+        exit 1
+    fi
+done
 
 # --- 2. Tailscale + SSH reachability -----------------------------------------
 c_blue "  testing SSH to $PI_USER@$PI_HOST…"

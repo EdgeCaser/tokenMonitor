@@ -8,6 +8,10 @@
 
     <key>ProgramArguments</key>
     <array>
+        <!-- @TOKMON_BIN@ must resolve outside ~/Documents, ~/Desktop and
+             ~/Downloads: macOS TCC blocks launchd from reading those, and the
+             failure is silent apart from a PermissionError in the log.
+             setup-client-macos.sh enforces this. -->
         <string>@TOKMON_BIN@</string>
         <string>push</string>
     </array>
