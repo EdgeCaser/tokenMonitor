@@ -38,18 +38,21 @@ def _register_pricing(conn: duckdb.DuckDBPyConnection) -> None:
         );
         """
     )
-    for model_periods in periods.values():
-        for period in model_periods:
-            rate = period.rate
-            conn.execute(
-                "INSERT INTO _pricing VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                [
-                    period.model, period.effective_from, period.effective_to,
-                    rate.input, rate.output, rate.cache_write_5m,
-                    rate.cache_write_1h, rate.cache_read, period.source_url,
-                    period.note,
-                ],
-            )
+    # One multi-row insert: this runs on every dashboard request, and ~45
+    # single-row inserts were most of the per-request setup time.
+    rows = [
+        [period.model, period.effective_from, period.effective_to,
+         period.rate.input, period.rate.output, period.rate.cache_write_5m,
+         period.rate.cache_write_1h, period.rate.cache_read, period.source_url,
+         period.note]
+        for model_periods in periods.values() for period in model_periods
+    ]
+    if rows:
+        conn.execute(
+            "INSERT INTO _pricing VALUES "
+            + ", ".join("(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)" for _ in rows),
+            [v for row in rows for v in row],
+        )
     sonnet = load_rates()["claude-sonnet-4-6"]
     conn.execute(
         """
@@ -100,17 +103,14 @@ QUALIFY ROW_NUMBER() OVER (
 CREATE OR REPLACE TEMP VIEW v_billable_turns AS
 SELECT * FROM v_all_billable_turns __LENS__;
 
-CREATE OR REPLACE TEMP VIEW v_billable_tool_calls_all AS
+CREATE OR REPLACE TEMP VIEW v_billable_tool_calls_live AS
 SELECT DISTINCT tc.turn_uuid, tc.idx, tc.tool_name, tc.input_chars, tc.input_preview
 FROM tool_calls tc
 JOIN v_all_billable_turns t ON t.uuid = tc.turn_uuid;
 
-CREATE OR REPLACE TEMP VIEW v_billable_tool_calls AS
-SELECT tc.*
-FROM v_billable_tool_calls_all tc
-JOIN v_billable_turns t ON t.uuid = tc.turn_uuid;
-
-CREATE OR REPLACE TEMP VIEW v_turn_cost_all AS
+-- Priced turns, computed live. When ingest has left a fresh precomputed copy
+-- (cache_turn_cost, see refresh_cache), v_turn_cost_all reads that instead.
+CREATE OR REPLACE TEMP VIEW v_turn_cost_live AS
 SELECT
     t.uuid,
     t.session_id,
@@ -153,8 +153,19 @@ LEFT JOIN _pricing p
 JOIN _pricing f
   ON f.model = CASE WHEN t.provider = 'codex' THEN '<fallback:codex>' ELSE '<fallback>' END;
 
+CREATE OR REPLACE TEMP VIEW v_turn_cost_all AS
+SELECT * FROM __COST_SRC__;
+
 CREATE OR REPLACE TEMP VIEW v_turn_cost AS
 SELECT * FROM v_turn_cost_all __LENS__;
+
+CREATE OR REPLACE TEMP VIEW v_billable_tool_calls_all AS
+SELECT turn_uuid, idx, tool_name, input_chars, input_preview FROM __TOOLS_SRC__;
+
+CREATE OR REPLACE TEMP VIEW v_billable_tool_calls AS
+SELECT tc.*
+FROM v_billable_tool_calls_all tc
+JOIN v_turn_cost t ON t.uuid = tc.turn_uuid;
 
 CREATE OR REPLACE TEMP VIEW v_session_summary AS
 SELECT
@@ -256,9 +267,9 @@ def normalize_provider(provider: str | None) -> str | None:
 def _turns_source(conn: duckdb.DuckDBPyConnection) -> str:
     """`turns`, or a shim adding the multi-provider columns when a read-only
     connection opens a DB that ingest hasn't migrated yet."""
-    cols = {r[0] for r in conn.execute(
-        "SELECT column_name FROM information_schema.columns WHERE table_name = 'turns'"
-    ).fetchall()}
+    # pragma_table_info, not information_schema: this runs on every request
+    # on a fresh connection, where information_schema is ~10x slower.
+    cols = {r[0] for r in conn.execute("SELECT name FROM pragma_table_info('turns')").fetchall()}
     extras = []
     if "provider" not in cols:
         extras.append("'claude' AS provider")
@@ -271,16 +282,115 @@ def _turns_source(conn: duckdb.DuckDBPyConnection) -> str:
     return f"(SELECT *, {', '.join(extras)} FROM turns)"
 
 
-def apply_lens(conn: duckdb.DuckDBPyConnection, provider: str | None) -> str | None:
+def _pricing_fingerprint(conn: duckdb.DuckDBPyConnection) -> str:
+    return conn.execute(
+        """
+        SELECT md5(string_agg(concat_ws('|', model, effective_from, effective_to,
+                                        input_per_mtok, output_per_mtok,
+                                        cache_write_5m_per_mtok, cache_write_1h_per_mtok,
+                                        cache_read_per_mtok),
+                              ';' ORDER BY model, effective_from))
+        FROM _pricing
+        """
+    ).fetchone()[0]
+
+
+def cache_is_fresh(conn: duckdb.DuckDBPyConnection) -> bool:
+    """True when ingest's precomputed tables match the current turns and the
+    current price table. Anything else (new turns, edited pricing.toml, a DB
+    from before the cache existed) falls back to live views."""
+    present = conn.execute(
+        "SELECT COUNT(*) FROM duckdb_tables() WHERE schema_name = 'main' "
+        "AND table_name IN ('cache_meta', 'cache_turn_cost', 'cache_tool_calls')"
+    ).fetchone()[0]
+    if present < 3:
+        return False
+    meta = conn.execute("SELECT turns_count, pricing_fp FROM cache_meta").fetchone()
+    if meta is None:
+        return False
+    n_turns = conn.execute("SELECT COUNT(*) FROM turns").fetchone()[0]
+    return meta[0] == n_turns and meta[1] == _pricing_fingerprint(conn)
+
+
+def apply_lens(
+    conn: duckdb.DuckDBPyConnection,
+    provider: str | None,
+    use_cache: bool = True,
+) -> str | None:
     """(Re)build the views with a provider lens. Returns the lens applied."""
     lens = normalize_provider(provider)
     where = f"WHERE provider = '{lens}'" if lens else ""
+    fresh = use_cache and cache_is_fresh(conn)
     conn.execute(
         VIEW_SQL
         .replace("__TURNS_SRC__", _turns_source(conn))
+        .replace("__COST_SRC__", "cache_turn_cost" if fresh else "v_turn_cost_live")
+        .replace("__TOOLS_SRC__", "cache_tool_calls" if fresh else "v_billable_tool_calls_live")
         .replace("__LENS__", where)
     )
+    conn.execute(f"CREATE OR REPLACE TEMP TABLE _cache_state AS SELECT {str(fresh).upper()} AS fresh")
     return lens
+
+
+def refresh_cache(conn: duckdb.DuckDBPyConnection, force: bool = False) -> bool:
+    """Precompute priced turns and categorized tool calls (write connection).
+
+    Every dashboard request otherwise re-runs the request_id dedup and the
+    date-ranged pricing join, several times per page. Ingest calls this after
+    each run; it is a no-op when nothing changed. Tool-call categories are
+    kept in tool_call_category and only computed for new calls.
+    Returns True if the cache was rebuilt.
+    """
+    from .ingest import _multi_insert
+    from .versus import tool_category
+
+    _register_pricing(conn)
+    apply_lens(conn, "all", use_cache=False)
+    if not force and cache_is_fresh(conn):
+        return False
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS tool_call_category (
+            turn_uuid VARCHAR NOT NULL,
+            idx       INT NOT NULL,
+            category  VARCHAR NOT NULL
+        )
+        """
+    )
+    new_calls = conn.execute(
+        """
+        SELECT DISTINCT tc.turn_uuid, tc.idx, tc.tool_name, tc.input_preview
+        FROM tool_calls tc
+        ANTI JOIN tool_call_category c ON c.turn_uuid = tc.turn_uuid AND c.idx = tc.idx
+        """
+    ).fetchall()
+    seen: set[tuple] = set()
+    rows = []
+    for turn_uuid, idx, name, preview in new_calls:
+        if (turn_uuid, idx) in seen:
+            continue
+        seen.add((turn_uuid, idx))
+        rows.append([turn_uuid, idx, tool_category(name, preview or "")])
+    _multi_insert(conn, "tool_call_category", ("turn_uuid", "idx", "category"), rows, chunk=500)
+
+    conn.execute("CREATE OR REPLACE TABLE cache_turn_cost AS SELECT * FROM v_turn_cost_live")
+    conn.execute(
+        """
+        CREATE OR REPLACE TABLE cache_tool_calls AS
+        SELECT tc.*, COALESCE(c.category, 'other') AS category
+        FROM v_billable_tool_calls_live tc
+        LEFT JOIN tool_call_category c ON c.turn_uuid = tc.turn_uuid AND c.idx = tc.idx
+        """
+    )
+    n_turns = conn.execute("SELECT COUNT(*) FROM turns").fetchone()[0]
+    conn.execute(
+        "CREATE OR REPLACE TABLE cache_meta AS "
+        "SELECT CAST(? AS BIGINT) AS turns_count, CAST(? AS VARCHAR) AS pricing_fp, "
+        "now() AS built_at",
+        [n_turns, _pricing_fingerprint(conn)],
+    )
+    return True
 
 
 def connect_with_views(
@@ -517,7 +627,7 @@ def spend_by(
                        COUNT(DISTINCT tc.turn_uuid) AS turns_using,
                        SUM(tc.input_chars) AS input_chars
                 FROM v_billable_tool_calls tc
-                JOIN v_billable_turns t ON t.uuid = tc.turn_uuid
+                JOIN v_turn_cost t ON t.uuid = tc.turn_uuid
                 WHERE t.host = ?
                 GROUP BY tc.tool_name ORDER BY calls DESC LIMIT 50
             """

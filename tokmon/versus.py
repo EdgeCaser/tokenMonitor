@@ -167,15 +167,32 @@ def versus(
     }
 
     tool_where, tool_params = _build_filter(since, host, ts_col="t.ts")
-    tool_rows = conn.execute(
-        f"""
-        SELECT t.provider, tc.tool_name, tc.input_preview
-        FROM v_billable_tool_calls_all tc
-        JOIN v_turn_cost_all t ON t.uuid = tc.turn_uuid
-        {tool_where}
-        """,
-        tool_params,
-    ).fetchall()
+    cached = bool(conn.execute("SELECT fresh FROM _cache_state").fetchone()[0])
+    if cached:
+        # Categories were computed once at ingest; aggregate in SQL.
+        tool_rows = conn.execute(
+            f"""
+            SELECT t.provider, tc.tool_name, tc.category, COUNT(*)
+            FROM cache_tool_calls tc
+            JOIN v_turn_cost_all t ON t.uuid = tc.turn_uuid
+            {tool_where}
+            GROUP BY 1, 2, 3
+            """,
+            tool_params,
+        ).fetchall()
+    else:
+        tool_rows = [
+            (prov, name, tool_category(name, preview or ""), 1)
+            for prov, name, preview in conn.execute(
+                f"""
+                SELECT t.provider, tc.tool_name, tc.input_preview
+                FROM v_billable_tool_calls_all tc
+                JOIN v_turn_cost_all t ON t.uuid = tc.turn_uuid
+                {tool_where}
+                """,
+                tool_params,
+            ).fetchall()
+        ]
 
     # is_prompt arrives with the first ingest after upgrading; a read-only
     # server can see the DB before that, so fall back to counting every row.
@@ -211,10 +228,10 @@ def versus(
     tools_by_p: dict[str, int] = defaultdict(int)
     cats: dict[str, dict[str, int]] = {p: defaultdict(int) for p in PROVIDERS}
     raw_tools: dict[str, dict[str, int]] = {p: defaultdict(int) for p in PROVIDERS}
-    for prov, name, preview in tool_rows:
-        tools_by_p[prov] += 1
-        cats.setdefault(prov, defaultdict(int))[tool_category(name, preview or "")] += 1
-        raw_tools.setdefault(prov, defaultdict(int))[name] += 1
+    for prov, name, category, n in tool_rows:
+        tools_by_p[prov] += n
+        cats.setdefault(prov, defaultdict(int))[category] += n
+        raw_tools.setdefault(prov, defaultdict(int))[name] += n
 
     durations: dict[str, list[float]] = defaultdict(list)
     for prov, _sid, _proj, first, last, _usd in sessions:

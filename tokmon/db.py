@@ -274,5 +274,7 @@ def reset(db_path: Path | None = None) -> None:
     conn.execute("DROP TABLE IF EXISTS ingest_log;")
     conn.execute("DROP TABLE IF EXISTS ingest_state;")
     conn.execute("DROP TABLE IF EXISTS rate_limit_samples;")
+    for t in ("cache_meta", "cache_turn_cost", "cache_tool_calls", "tool_call_category"):
+        conn.execute(f"DROP TABLE IF EXISTS {t};")
     conn.execute(SCHEMA_SQL)
     conn.close()

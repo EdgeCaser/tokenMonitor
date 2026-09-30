@@ -500,6 +500,12 @@ def incremental(
             if file_count % 10 == 0:
                 conn.execute("CHECKPOINT")
     conn.execute("CHECKPOINT")
+    try:
+        from .analytics import refresh_cache
+        if refresh_cache(conn):
+            conn.execute("CHECKPOINT")
+    except Exception as e:  # the dashboard falls back to live views
+        print(f"[tokmon] cache refresh failed: {e}", file=__import__('sys').stderr)
     after_turns = conn.execute("SELECT COUNT(*) FROM turns").fetchone()[0]
     after_user = conn.execute("SELECT COUNT(*) FROM user_turns").fetchone()[0]
     after_tools = conn.execute("SELECT COUNT(*) FROM tool_calls").fetchone()[0]

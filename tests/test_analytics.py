@@ -78,6 +78,10 @@ def test_billable_views_dedupe_duplicate_request_ids(loaded):
     )
 
     assert loaded.execute("SELECT COUNT(*) FROM turns").fetchone()[0] == 5
+    # Re-check freshness: the turn count moved, so the precomputed cache is
+    # stale and the live dedup views must be the ones answering.
+    A.apply_lens(loaded, "all")
+    assert loaded.execute("SELECT fresh FROM _cache_state").fetchone()[0] is False
     after = A.summary(loaded)
     assert after["turns"] == before["turns"]
     assert after["total_usd"] == pytest.approx(before["total_usd"])

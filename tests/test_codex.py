@@ -429,3 +429,46 @@ def test_server_provider_param(env):
     v = client.get("/api/versus?provider=codex").json()
     assert v["stats"]["claude"] is not None
     assert client.get("/api/codex_limits").status_code == 200
+
+
+def test_cache_matches_live_views(env):
+    ingest.incremental(roots=_roots(env))
+    cached = A.connect_with_views(provider="all")
+    assert cached.execute("SELECT fresh FROM _cache_state").fetchone()[0] is True
+    live = A.connect_with_views(provider="all")
+    A.apply_lens(live, "all", use_cache=False)
+    assert live.execute("SELECT fresh FROM _cache_state").fetchone()[0] is False
+    assert A.summary(cached) == pytest.approx(A.summary(live))
+    # Parallel aggregation can sum floats in a different order, so compare
+    # money to 9 decimals rather than bit-for-bit.
+    def norm(rows):
+        return sorted(tuple(round(v, 9) if isinstance(v, float) else v for v in r) for r in rows)
+    for dim in ("project", "model", "tool", "provider", "session"):
+        assert norm(A.spend_by(cached, dim)) == norm(A.spend_by(live, dim))
+    vc, vl = V.versus(cached), V.versus(live)
+    assert vc["tool_mix"] == vl["tool_mix"]
+    rnd = lambda d: {k: round(v, 9) if isinstance(v, float) else v for k, v in d.items()}
+    assert {p: rnd(x) for p, x in vc["stats"].items()} == {p: rnd(x) for p, x in vl["stats"].items()}
+
+
+def test_cache_goes_stale_on_new_turns_and_price_changes(env, tmp_path, monkeypatch):
+    ingest.incremental(roots=_roots(env))
+    conn = A.connect_with_views()
+    assert A.cache_is_fresh(conn)
+    # new data that the cache hasn't seen yet
+    f = env["day"] / "rollout-2026-09-01T15-00-00-thread-new.jsonl"
+    _write(f, modern_rollout(thread="thread-new"))
+    ingest.incremental(roots=_roots(env))           # ingest rebuilds it
+    assert A.cache_is_fresh(A.connect_with_views())
+    conn = db.connect()
+    conn.execute("DELETE FROM turns WHERE uuid = 'codex:resp-thread-new-0'")
+    conn.close()
+    assert not A.cache_is_fresh(A.connect_with_views())
+    # an edited price table also invalidates it
+    ingest.incremental(roots=_roots(env))
+    A.refresh_cache(db.connect(), force=True)
+    assert A.cache_is_fresh(A.connect_with_views())
+    toml = tmp_path / "pricing.toml"
+    toml.write_text('[models."gpt-5.6-sol"]\ninput = 99.0\noutput = 99.0\n')
+    monkeypatch.setattr(P, "DEFAULT_PRICING_PATH", toml)
+    assert not A.cache_is_fresh(A.connect_with_views())
