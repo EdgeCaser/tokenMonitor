@@ -6,10 +6,11 @@ import contextvars
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Query
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import analytics as A
+from . import versus as V
 
 app = FastAPI(title="tokmon", version="0.1.0")
 
@@ -18,11 +19,17 @@ app = FastAPI(title="tokmon", version="0.1.0")
 # release every read-only connection promptly — otherwise the 10-minute ingest
 # can never acquire the write lock and new data stops appearing.
 _request_conns: contextvars.ContextVar[list] = contextvars.ContextVar("_request_conns")
+# Provider lens for this request, from the `provider` query param that the
+# dashboard appends to every API call. Applied at the view layer, so every
+# endpoint honors it without its own parameter.
+_request_provider: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "_request_provider", default=None
+)
 
 
 def _conn():
     """Open a read-only analytics connection, tracked for close after the request."""
-    conn = A.connect_with_views(read_only=True)
+    conn = A.connect_with_views(read_only=True, provider=_request_provider.get() or "all")
     try:
         _request_conns.get().append(conn)
     except LookupError:
@@ -32,7 +39,12 @@ def _conn():
 
 @app.middleware("http")
 async def _close_request_conns(request, call_next):
+    try:
+        provider = A.normalize_provider(request.query_params.get("provider") or "all")
+    except ValueError as exc:
+        return JSONResponse({"detail": str(exc)}, status_code=400)
     token = _request_conns.set([])
+    ptoken = _request_provider.set(provider)
     try:
         return await call_next(request)
     finally:
@@ -42,6 +54,7 @@ async def _close_request_conns(request, call_next):
             except Exception:  # noqa: BLE001 — best-effort cleanup
                 pass
         _request_conns.reset(token)
+        _request_provider.reset(ptoken)
 
 
 def _rows_to_dicts(rows, keys):
@@ -86,6 +99,7 @@ def api_spend(
         "session":       ["session_id", "project", "turns", "tokens", "usd"],
         "tool":          ["tool_name", "calls", "turns_using", "input_chars"],
         "host":          ["host", "sessions", "turns", "tokens", "usd"],
+        "provider":      ["provider", "sessions", "turns", "tokens", "usd"],
     }
     if by not in keymap:
         raise HTTPException(400, f"unknown by={by}")
@@ -355,6 +369,50 @@ def api_quota(metric: str = Query("usd"), host: str | None = Query(None)):
         raise HTTPException(400, "metric must be 'usd' or 'tokens'")
     conn = _conn()
     return A.quota_inference(conn, metric=metric, host=host)
+
+
+@app.get("/api/providers")
+def api_providers():
+    """Which providers have data, for the dashboard's provider switch.
+    Always unfiltered, regardless of the request's lens."""
+    conn = A.connect_with_views(read_only=True, provider="all")
+    try:
+        _request_conns.get().append(conn)
+    except LookupError:
+        pass
+    rows = conn.execute(
+        """
+        SELECT provider, COUNT(*), SUM(total_usd), MIN(ts), MAX(ts)
+        FROM v_turn_cost_all GROUP BY provider ORDER BY provider
+        """
+    ).fetchall()
+    return [
+        {"provider": p, "turns": int(n), "usd": float(u or 0),
+         "first_ts": a.isoformat() if a else None,
+         "last_ts": b.isoformat() if b else None}
+        for p, n, u, a, b in rows
+    ]
+
+
+@app.get("/api/versus")
+def api_versus(
+    since: str = Query("all"),
+    host: str | None = Query(None),
+    timezone: str = Query("America/Los_Angeles"),
+    handoff_gap_minutes: int = Query(120, ge=1, le=24 * 60),
+):
+    conn = _conn()
+    try:
+        return V.versus(conn, since=since, host=host, timezone_name=timezone,
+                        handoff_gap_minutes=handoff_gap_minutes)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@app.get("/api/codex_limits")
+def api_codex_limits():
+    conn = _conn()
+    return V.codex_limits(conn)
 
 
 _WEB_DIR = Path(__file__).parent / "_web"

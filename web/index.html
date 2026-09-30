@@ -48,6 +48,25 @@
     font-weight: normal;
   }
   .subhead { font-size: 11px; color: rgb(100, 116, 139); margin-top: 4px; }
+
+  /* Provider identity. Validated as a categorical pair (dataviz validator:
+     CVD ΔE 9.9, normal-vision ΔE 23.1, both ≥3:1 on white). */
+  :root { --claude: #c96442; --codex: #0d8f86; }
+  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; vertical-align: middle; }
+  .dot-claude { background: var(--claude); }
+  .dot-codex  { background: var(--codex); }
+  .prov-btn { padding: 4px 10px; color: rgb(71 85 105); white-space: nowrap; }
+  .prov-btn + .prov-btn { border-left: 1px solid rgb(226 232 240); }
+  .prov-btn.active { background: rgb(15 23 42); color: white; }
+  .prov-btn:disabled { opacity: .4; cursor: not-allowed; }
+  .split-bar { display: flex; height: 10px; border-radius: 5px; overflow: hidden; gap: 2px; background: white; }
+  .split-bar > span { display: block; height: 100%; }
+  .split-bar > span:first-child { border-radius: 5px 0 0 5px; }
+  .split-bar > span:last-child  { border-radius: 0 5px 5px 0; }
+  .meter { position: relative; height: 14px; background: rgb(241 245 249); border-radius: 7px; overflow: hidden; }
+  .meter > .fill { position: absolute; inset: 0 auto 0 0; background: var(--codex); border-radius: 7px; }
+  .meter > .proj { position: absolute; top: 0; bottom: 0; background: repeating-linear-gradient(135deg, rgba(13,143,134,.35) 0 4px, transparent 4px 8px); }
+  .meter > .tick { position: absolute; top: -2px; bottom: -2px; width: 2px; background: rgb(15 23 42); }
   .fit-card-value {
     display: block;
     max-width: 100%;
@@ -79,6 +98,12 @@
       </div>
     </div>
     <div class="flex flex-wrap items-center gap-3">
+      <div id="provider-switch" class="inline-flex rounded border bg-white text-sm overflow-hidden"
+           role="group" aria-label="which tool's usage to show">
+        <button type="button" class="prov-btn" data-provider="all">all tools</button>
+        <button type="button" class="prov-btn" data-provider="claude"><span class="dot dot-claude"></span>Claude</button>
+        <button type="button" class="prov-btn" data-provider="codex"><span class="dot dot-codex"></span>Codex</button>
+      </div>
       <label class="text-sm text-slate-600">host</label>
       <select id="host" class="border rounded px-2 py-1 text-sm bg-white">
         <option value="">all hosts</option>
@@ -117,6 +142,7 @@
 
   <nav class="flex gap-1 border-b overflow-x-auto flex-nowrap">
     <button class="tab active px-3 py-2 rounded-t text-sm font-medium whitespace-nowrap flex-shrink-0" data-tab="overview">Overview</button>
+    <button class="tab px-3 py-2 rounded-t text-sm font-medium whitespace-nowrap flex-shrink-0" data-tab="versus"><span class="dot dot-claude"></span><span class="dot dot-codex" style="margin-left:-4px"></span>Versus</button>
     <button class="tab px-3 py-2 rounded-t text-sm font-medium whitespace-nowrap flex-shrink-0" data-tab="projects">Projects</button>
     <button class="tab px-3 py-2 rounded-t text-sm font-medium whitespace-nowrap flex-shrink-0" data-tab="sessions">Sessions</button>
     <button class="tab px-3 py-2 rounded-t text-sm font-medium whitespace-nowrap flex-shrink-0" data-tab="tools">Tools</button>
@@ -132,11 +158,19 @@
 
   <!-- OVERVIEW -->
   <section data-pane="overview" class="space-y-6">
+    <div id="provider-split" class="hidden bg-white rounded shadow px-4 py-3 cursor-pointer" title="open the Versus tab">
+      <div class="flex flex-wrap items-baseline justify-between gap-2 text-sm mb-2">
+        <span><span class="dot dot-claude"></span>Claude <strong id="split-claude" class="num">—</strong></span>
+        <span class="text-xs text-slate-500" id="split-caption">share of API-equivalent spend</span>
+        <span><strong id="split-codex" class="num">—</strong> Codex<span class="dot dot-codex" style="margin:0 0 0 6px"></span></span>
+      </div>
+      <div class="split-bar" aria-hidden="true"><span id="split-bar-claude" style="background:var(--claude)"></span><span id="split-bar-codex" style="background:var(--codex)"></span></div>
+    </div>
     <div class="grid grid-cols-2 md:grid-cols-3 gap-4">
       <div class="bg-white rounded shadow p-4">
         <div class="text-xs uppercase text-slate-500">
           turns
-          <span class="tip" data-tip="What: total Claude assistant responses (one per round-trip).&#10;Why care: Volume gauge. Combine with sessions to get turns-per-session — high values mean deep focused work, low values mean quick check-ins.">?</span>
+          <span class="tip" data-tip="What: total model responses (one per API round-trip), from Claude Code and/or Codex per the tool switch.&#10;Why care: Volume gauge. Combine with sessions to get turns-per-session — high values mean deep focused work, low values mean quick check-ins.">?</span>
         </div>
         <div id="t-turns" class="num text-3xl font-bold">—</div>
         <div id="t-turns-delta" class="text-xs mt-1 h-4"></div>
@@ -144,7 +178,7 @@
       <div class="bg-white rounded shadow p-4">
         <div class="text-xs uppercase text-slate-500">
           sessions
-          <span class="tip" data-tip="What: distinct Claude Code conversations (one per `claude` invocation).&#10;Why care: How often you reach for Claude. Spread across a few long sessions or many short ones tells you about your usage style.">?</span>
+          <span class="tip" data-tip="What: distinct Claude Code conversations or Codex threads (subagents roll up into their parent).&#10;Why care: How often you reach for Claude. Spread across a few long sessions or many short ones tells you about your usage style.">?</span>
         </div>
         <div id="t-sessions" class="num text-3xl font-bold">—</div>
         <div id="t-sessions-delta" class="text-xs mt-1 h-4"></div>
@@ -505,6 +539,8 @@
           <option value="host" selected>host</option>
           <option value="project">project</option>
           <option value="host_project">host + project</option>
+          <option value="provider">tool (Claude / Codex)</option>
+          <option value="provider_model">tool + model</option>
         </select>
         <label class="text-sm text-slate-600">unit</label>
         <select id="spend-unit" class="border rounded px-2 py-1 text-sm bg-white">
@@ -751,7 +787,189 @@
   </section>
 
   <!-- QUOTAS -->
+  <!-- VERSUS -->
+  <section data-pane="versus" class="hidden space-y-4">
+    <div id="vs-empty" class="hidden bg-amber-50 border border-amber-200 rounded p-4 text-sm text-amber-900"></div>
+
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <div class="bg-white rounded shadow p-4 border-t-4" style="border-top-color: var(--claude)">
+        <div class="text-xs uppercase text-slate-500"><span class="dot dot-claude"></span>Claude Code</div>
+        <div id="vs-claude-usd" class="num text-3xl font-bold mt-1">—</div>
+        <div id="vs-claude-sub" class="text-xs text-slate-500 mt-1">—</div>
+      </div>
+      <div class="bg-white rounded shadow p-4 flex flex-col justify-center">
+        <div class="text-xs uppercase text-slate-500 text-center">share of spend</div>
+        <div class="split-bar my-3" aria-hidden="true"><span id="vs-bar-claude" style="background:var(--claude)"></span><span id="vs-bar-codex" style="background:var(--codex)"></span></div>
+        <div id="vs-score" class="text-sm text-center text-slate-700">—</div>
+        <div id="vs-duels" class="text-xs text-center text-slate-500 mt-1">—</div>
+      </div>
+      <div class="bg-white rounded shadow p-4 border-t-4" style="border-top-color: var(--codex)">
+        <div class="text-xs uppercase text-slate-500"><span class="dot dot-codex"></span>Codex</div>
+        <div id="vs-codex-usd" class="num text-3xl font-bold mt-1">—</div>
+        <div id="vs-codex-sub" class="text-xs text-slate-500 mt-1">—</div>
+      </div>
+    </div>
+
+    <div class="bg-white rounded shadow p-4">
+      <h2 class="font-semibold">Head to head
+        <span class="tip" data-tip="Every metric uses API-equivalent dollars, the same pricing basis for both tools.&#10;Only metrics where better/worse is unambiguous get a winner; the rest just show the difference.&#10;Prompt = one message you sent (Codex: one task). Response = one model API call.">?</span>
+      </h2>
+      <div class="subhead mb-3">Same window, same host filter, same pricing basis. The bar shows each tool's value relative to the larger one.</div>
+      <div class="overflow-x-auto">
+        <table class="w-full text-sm">
+          <thead><tr class="text-slate-500 text-left">
+            <th class="py-1">metric</th>
+            <th class="text-right">Claude</th><th class="w-1/4"></th><th class="text-right">Codex</th>
+            <th class="text-right">edge</th>
+          </tr></thead>
+          <tbody id="vs-scorecard"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <div class="bg-white rounded shadow p-4">
+        <h2 class="font-semibold">Weekly spend by tool</h2>
+        <div class="subhead mb-2">API-equivalent $ per week, stacked.</div>
+        <div style="height: 240px;"><canvas id="chart-vs-weekly"></canvas></div>
+      </div>
+      <div class="bg-white rounded shadow p-4">
+        <h2 class="font-semibold">The migration curve</h2>
+        <div class="subhead mb-2">Codex's share of each week's spend. 50% is an even split.</div>
+        <div style="height: 240px;"><canvas id="chart-vs-share"></canvas></div>
+      </div>
+    </div>
+
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <div class="bg-white rounded shadow p-4">
+        <h2 class="font-semibold">Who gets the late shift</h2>
+        <div class="subhead mb-2">Each tool's spend by hour of day (Pacific), as a share of that tool's own total, so the shapes compare even when one tool dominates.</div>
+        <div style="height: 240px;"><canvas id="chart-vs-hours"></canvas></div>
+      </div>
+      <div class="bg-white rounded shadow p-4">
+        <h2 class="font-semibold">What the calls are spent on
+          <span class="tip" data-tip="Both tools' tool calls mapped onto one set of verbs.&#10;Shell calls are classified by the command they run (git, rg/grep, cat/sed -n, pytest…), because Codex reads and searches mostly through the shell while Claude has dedicated Read/Grep/Glob tools.">?</span>
+        </h2>
+        <div class="subhead mb-2">Share of each tool's calls by category.</div>
+        <div style="height: 240px;"><canvas id="chart-vs-tools"></canvas></div>
+      </div>
+    </div>
+
+    <div class="grid grid-cols-1 md:grid-cols-5 gap-4">
+      <div class="bg-white rounded shadow p-4 md:col-span-3">
+        <h2 class="font-semibold">Projects: who owns what</h2>
+        <div id="vs-projects-sub" class="subhead mb-3">—</div>
+        <div class="overflow-x-auto">
+          <table class="w-full text-sm">
+            <thead><tr class="text-slate-500 text-left">
+              <th class="py-1">project</th><th class="text-right">Claude</th>
+              <th class="w-2/5 px-2">split</th><th class="text-right">Codex</th>
+            </tr></thead>
+            <tbody id="vs-projects"></tbody>
+          </table>
+        </div>
+      </div>
+      <div class="bg-white rounded shadow p-4 md:col-span-2">
+        <div class="flex items-center justify-between gap-2">
+          <h2 class="font-semibold">Handoffs
+            <span class="tip" data-tip="A handoff: a session with one tool starts on a project within the gap of the other tool's last activity there.&#10;Lopsided counts in one direction suggest which tool you reach for when the other one stalls.">?</span>
+          </h2>
+          <select id="vs-gap" class="border rounded px-2 py-1 text-xs bg-white" aria-label="handoff gap">
+            <option value="30">≤ 30 min</option>
+            <option value="120" selected>≤ 2 h</option>
+            <option value="360">≤ 6 h</option>
+          </select>
+        </div>
+        <div class="grid grid-cols-2 gap-3 my-3 text-center">
+          <div class="rounded bg-slate-50 p-2">
+            <div class="text-xs text-slate-500"><span class="dot dot-claude"></span>→<span class="dot dot-codex" style="margin-left:6px"></span></div>
+            <div id="vs-h-c2x" class="num text-2xl font-bold">—</div>
+            <div class="text-xs text-slate-500">Claude → Codex</div>
+          </div>
+          <div class="rounded bg-slate-50 p-2">
+            <div class="text-xs text-slate-500"><span class="dot dot-codex"></span>→<span class="dot dot-claude" style="margin-left:6px"></span></div>
+            <div id="vs-h-x2c" class="num text-2xl font-bold">—</div>
+            <div class="text-xs text-slate-500">Codex → Claude</div>
+          </div>
+        </div>
+        <ul id="vs-handoffs" class="text-xs space-y-1"></ul>
+      </div>
+    </div>
+
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <div class="bg-white rounded shadow p-4">
+        <h2 class="font-semibold">Codex reasoning-effort ladder</h2>
+        <div class="subhead mb-3">What each effort setting costs per response, and how much hidden reasoning it buys.</div>
+        <table class="w-full text-sm">
+          <thead><tr class="text-slate-500 text-left">
+            <th class="py-1">effort</th><th class="text-right">responses</th>
+            <th class="text-right">$ / response</th><th class="text-right">avg reasoning tok</th>
+            <th class="text-right">spend</th>
+          </tr></thead>
+          <tbody id="vs-effort"></tbody>
+        </table>
+      </div>
+      <div class="bg-white rounded shadow p-4">
+        <h2 class="font-semibold">Models</h2>
+        <div class="subhead mb-3">Every model either tool used in this window.</div>
+        <div class="overflow-x-auto max-h-72 overflow-y-auto">
+          <table class="w-full text-sm">
+            <thead><tr class="text-slate-500 text-left">
+              <th class="py-1">model</th><th class="text-right">responses</th>
+              <th class="text-right">output tok</th><th class="text-right">spend</th>
+            </tr></thead>
+            <tbody id="vs-models"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </section>
+
   <section data-pane="quotas" class="hidden space-y-4">
+    <div id="cq-section" class="hidden space-y-4">
+      <div class="bg-white rounded shadow p-4 border-t-4" style="border-top-color: var(--codex)">
+        <div class="flex flex-wrap items-baseline justify-between gap-2">
+          <h2 class="font-semibold"><span class="dot dot-codex"></span>Codex rate limits: measured
+            <span class="tip" data-tip="Codex writes the account's own rate-limit meter (used % and reset time) into every session log, so this section is read, not inferred.&#10;Each reading is paired with the API-equivalent $ of the Codex responses in that window, which gives the dollar size of a full window.">?</span>
+          </h2>
+          <div id="cq-caption" class="text-xs text-slate-500">—</div>
+        </div>
+        <div id="cq-current" class="mt-4 space-y-4"></div>
+      </div>
+
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div class="bg-white rounded shadow p-4">
+          <h2 class="font-semibold">What a full window is worth</h2>
+          <div class="subhead mb-3">Implied API-equivalent $ at 100% of the window, per plan. Only windows that reached ≥10% with ≥3 readings count.</div>
+          <table class="w-full text-sm">
+            <thead><tr class="text-slate-500 text-left">
+              <th class="py-1">plan</th><th>window</th><th class="text-right">windows</th>
+              <th class="text-right">median</th><th class="text-right">range</th>
+            </tr></thead>
+            <tbody id="cq-plans"></tbody>
+          </table>
+        </div>
+        <div class="bg-white rounded shadow p-4">
+          <h2 class="font-semibold">Grading the inference
+            <span class="tip" data-tip="tokmon infers Claude's quota ceilings from usage alone (the section below).&#10;Here the same algorithm runs on Codex usage, where the true answer is known from the meter, to show how far to trust it.">?</span>
+          </h2>
+          <div class="subhead mb-3">The Claude-side quota inference, run blind on Codex usage and checked against Codex's real meter.</div>
+          <div id="cq-calibration" class="space-y-3 text-sm"></div>
+        </div>
+      </div>
+
+      <div class="bg-white rounded shadow p-4">
+        <h2 class="font-semibold">Window history</h2>
+        <div class="subhead mb-2">Implied full-window value for each weekly window, by the week it started. Hollow points had too few readings to trust.</div>
+        <div style="height: 240px;"><canvas id="chart-cq-history"></canvas></div>
+      </div>
+    </div>
+
+    <div id="q-claude-heading" class="pt-2">
+      <h2 class="font-semibold text-slate-700"><span class="dot dot-claude"></span>Claude plan quotas: inferred</h2>
+      <div class="subhead">Claude Code logs no rate-limit meter, so these ceilings are estimated from usage peaks.</div>
+    </div>
+    <div id="q-claude" class="space-y-4">
     <div class="bg-white rounded shadow p-4">
       <div class="flex items-center justify-between">
         <div>
@@ -815,6 +1033,7 @@
       <h3 class="font-semibold text-sm mb-2">How to read this</h3>
       <ul id="q-notes" class="text-xs text-slate-600 list-disc list-inside space-y-1"></ul>
     </div>
+    </div>
   </section>
 
 </div>
@@ -847,10 +1066,72 @@ function destroyChart(name) {
   if (charts[name]) { charts[name].destroy(); delete charts[name]; }
 }
 
+// Provider lens: "all" | "claude" | "codex". Appended to every API call; the
+// server applies it at the view layer, so every endpoint honors it.
+const PROVIDER_COLORS = { claude: "#c96442", codex: "#0d8f86" };
+const PROVIDER_LABELS = { claude: "Claude", codex: "Codex", all: "all tools" };
+let PROVIDER = (() => {
+  try { return localStorage.getItem("tokmon.provider") || "all"; } catch (e) { return "all"; }
+})();
+let PROVIDERS_PRESENT = [];
+
+function withProvider(path) {
+  if (PROVIDER === "all") return path;
+  const u = new URL(path, location.origin);
+  if (!u.searchParams.has("provider")) u.searchParams.set("provider", PROVIDER);
+  return u.pathname + u.search;
+}
+
 async function api(path) {
-  const r = await fetch(path);
-  if (!r.ok) throw new Error(path + " " + r.status);
+  const url = withProvider(path);
+  const r = await fetch(url);
+  if (!r.ok) throw new Error(url + " " + r.status);
   return r.json();
+}
+
+function hexA(hex, alpha) {
+  const n = parseInt(hex.slice(1), 16);
+  return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${alpha})`;
+}
+
+function setProvider(p) {
+  PROVIDER = p;
+  try { localStorage.setItem("tokmon.provider", p); } catch (e) {}
+  document.querySelectorAll("#provider-switch [data-provider]").forEach(b =>
+    b.classList.toggle("active", b.dataset.provider === p));
+  document.querySelector("h1").textContent = p === "all" ? "tokmon" : `tokmon · ${PROVIDER_LABELS[p]}`;
+  // Host totals in the dropdown are lens-dependent: rebuild on next load.
+  const sel = $("#host");
+  while (sel.options.length > 1) sel.remove(1);
+}
+
+async function initProviderSwitch() {
+  document.querySelectorAll("#provider-switch [data-provider]").forEach(b =>
+    b.addEventListener("click", () => {
+      if (b.disabled || b.dataset.provider === PROVIDER) return;
+      setProvider(b.dataset.provider);
+      loadMeta();
+      load(currentTab());
+    }));
+  try {
+    const rows = await fetch("/api/providers").then(r => r.json());
+    PROVIDERS_PRESENT = rows.map(r => r.provider);
+    for (const r of rows) {
+      const b = document.querySelector(`#provider-switch [data-provider="${r.provider}"]`);
+      if (b) b.title = `${fmtInt(r.turns)} responses · ${fmtUsd(r.usd)} API-equivalent`;
+    }
+    for (const p of ["claude", "codex"]) {
+      const b = document.querySelector(`#provider-switch [data-provider="${p}"]`);
+      if (b && !PROVIDERS_PRESENT.includes(p)) {
+        b.disabled = true;
+        b.title = `no ${PROVIDER_LABELS[p]} data ingested`;
+      }
+    }
+  } catch (e) { /* older server: leave the switch as-is */ }
+  if (PROVIDER !== "all" && PROVIDERS_PRESENT.length && !PROVIDERS_PRESENT.includes(PROVIDER)) {
+    PROVIDER = "all";
+  }
+  setProvider(PROVIDER);
 }
 
 function setActive(name) {
@@ -1156,6 +1437,7 @@ populateHostDropdown();
 
 async function load(tab) {
   if (tab === "overview")   await loadOverview();
+  if (tab === "versus")     await loadVersus();
   if (tab === "projects")   await loadProjects();
   if (tab === "sessions")   await loadSessions();
   if (tab === "tools")      await loadTools();
@@ -1232,6 +1514,7 @@ function currentTurnsApiPath() {
     params.set("timezone", CHART_TZ);
   }
   params.set("limit", "200");
+  if (PROVIDER !== "all") params.set("provider", PROVIDER);
   return `/api/turns?${params.toString()}`;
 }
 
@@ -1271,8 +1554,9 @@ function pivotSeries(rows, metric = "usd", allLabels = null) {
   const datasets = series.map((name, i) => ({
     label: name,
     data: labels.map(b => byKey.get(`${b}\u0000${name}`)?.[metric] || 0),
-    backgroundColor: colorFor(i, 0.58),
-    borderColor: colorFor(i),
+    // Provider series wear their identity color, never a rank color.
+    backgroundColor: PROVIDER_COLORS[name] ? hexA(PROVIDER_COLORS[name], 0.7) : colorFor(i, 0.58),
+    borderColor: PROVIDER_COLORS[name] || colorFor(i),
     borderWidth: 1.5,
     fill: rows.some(r => r.series !== "total"),
     tension: 0.2,
@@ -1559,6 +1843,315 @@ function summaryTokens(s) {
     Number(s.cache_read || 0);
 }
 
+// Claude-vs-Codex share strip on the Overview; only meaningful with both
+// tools present and no lens applied.
+async function renderProviderSplit() {
+  const box = $("#provider-split");
+  if (PROVIDER !== "all" || PROVIDERS_PRESENT.length < 2) { box.classList.add("hidden"); return; }
+  try {
+    const rows = await api(`/api/spend?by=provider&since=${since()}${hostQ()}`);
+    const by = Object.fromEntries(rows.map(r => [r.provider, Number(r.usd || 0)]));
+    const c = by.claude || 0, x = by.codex || 0, tot = c + x;
+    if (!tot) { box.classList.add("hidden"); return; }
+    $("#split-claude").textContent = `${fmtUsd(c)} · ${(100 * c / tot).toFixed(0)}%`;
+    $("#split-codex").textContent = `${(100 * x / tot).toFixed(0)}% · ${fmtUsd(x)}`;
+    $("#split-bar-claude").style.width = `${100 * c / tot}%`;
+    $("#split-bar-codex").style.width = `${100 * x / tot}%`;
+    $("#split-bar-claude").style.display = c ? "" : "none";
+    $("#split-bar-codex").style.display = x ? "" : "none";
+    box.classList.remove("hidden");
+  } catch (e) { box.classList.add("hidden"); }
+}
+document.addEventListener("DOMContentLoaded", () => {
+  $("#provider-split")?.addEventListener("click", () => setActive("versus"));
+  $("#vs-gap")?.addEventListener("change", () => loadVersus());
+});
+
+function fmtVs(key, v) {
+  if (v == null) return "—";
+  if (key === "usd") return fmtUsd(v);
+  if (key.startsWith("usd_")) return "$" + Number(v).toFixed(v < 1 ? 3 : 2);
+  if (key.endsWith("_pct")) return Number(v).toFixed(1) + "%";
+  if (key === "median_session_min") return Number(v).toFixed(1);
+  if (!Number.isInteger(v)) return Number(v).toLocaleString(undefined, { maximumFractionDigits: 1 });
+  return fmtInt(v);
+}
+
+function vsChartOpts(extra = {}) {
+  return {
+    responsive: true, maintainAspectRatio: false,
+    interaction: { mode: "index", intersect: false },
+    plugins: { legend: { display: true, position: "bottom" } },
+    ...extra,
+  };
+}
+
+async function loadVersus() {
+  const gap = $("#vs-gap").value;
+  // Versus always compares both tools; the lens doesn't narrow it.
+  const r = await fetch(`/api/versus?since=${encodeURIComponent(since())}${hostQ()}${tzQ()}&handoff_gap_minutes=${gap}`);
+  if (!r.ok) throw new Error("versus " + r.status);
+  const v = await r.json();
+  const st = v.stats || {};
+  const both = st.claude && st.codex;
+  const empty = $("#vs-empty");
+  if (!both) {
+    const have = ["claude", "codex"].filter(p => st[p]).map(p => PROVIDER_LABELS[p]);
+    empty.innerHTML = have.length
+      ? `Only ${have.join(" and ")} has usage in this window. Widen the window, or ingest the other tool's logs ` +
+        `(<code>~/.codex</code> is picked up automatically next to <code>~/.claude/projects</code>).`
+      : "No usage in this window.";
+    empty.classList.remove("hidden");
+  } else {
+    empty.classList.add("hidden");
+  }
+
+  const total = (st.claude?.usd || 0) + (st.codex?.usd || 0);
+  for (const p of ["claude", "codex"]) {
+    const x = st[p];
+    $(`#vs-${p}-usd`).textContent = x ? fmtUsd(x.usd) : "—";
+    $(`#vs-${p}-sub`).textContent = x
+      ? `${fmtInt(x.prompts)} prompts · ${fmtInt(x.turns)} responses · ${fmtInt(x.sessions)} sessions · ${fmtInt(x.active_days)} active days`
+      : "no usage in this window";
+    $(`#vs-bar-${p}`).style.width = total ? `${100 * (x?.usd || 0) / total}%` : "50%";
+    $(`#vs-bar-${p}`).style.display = x?.usd ? "" : "none";
+  }
+  const wins = { claude: 0, codex: 0 };
+  v.scorecard.forEach(r => { if (r.winner) wins[r.winner]++; });
+  $("#vs-score").innerHTML = total
+    ? `<span class="dot dot-claude"></span>${(100 * (st.claude?.usd || 0) / total).toFixed(0)}% · ` +
+      `${(100 * (st.codex?.usd || 0) / total).toFixed(0)}%<span class="dot dot-codex" style="margin:0 0 0 6px"></span>` +
+      `<div class="text-xs text-slate-500 mt-1">scored metrics won: Claude ${wins.claude} · Codex ${wins.codex}</div>`
+    : "—";
+  const d = v.duels;
+  $("#vs-duels").textContent =
+    `${d.both_days} days used both (Claude heavier ${d.claude_heavier}, Codex heavier ${d.codex_heavier}) · ` +
+    `${d.claude_only} Claude-only · ${d.codex_only} Codex-only`;
+
+  // Scorecard with a relative bar per row.
+  $("#vs-scorecard").innerHTML = v.scorecard.map(r => {
+    const a = r.claude, b = r.codex;
+    const mx = Math.max(Math.abs(a || 0), Math.abs(b || 0)) || 1;
+    const edge = r.winner
+      ? `<span class="text-xs font-medium"><span class="dot dot-${r.winner}"></span>${PROVIDER_LABELS[r.winner]}</span>`
+      : (a != null && b != null && a !== 0
+          ? `<span class="text-xs text-slate-500">${(b / a).toFixed(2)}×</span>` : "");
+    return `<tr class="border-t">
+      <td class="py-1.5">${r.label}</td>
+      <td class="text-right num">${fmtVs(r.key, a)}</td>
+      <td class="px-2">
+        <div class="flex flex-col gap-0.5" aria-hidden="true">
+          <div style="height:4px;border-radius:2px;background:var(--claude);width:${100 * Math.abs(a || 0) / mx}%"></div>
+          <div style="height:4px;border-radius:2px;background:var(--codex);width:${100 * Math.abs(b || 0) / mx}%"></div>
+        </div>
+      </td>
+      <td class="text-right num">${fmtVs(r.key, b)}</td>
+      <td class="text-right">${edge}</td>
+    </tr>`;
+  }).join("");
+
+  // Weekly spend (stacked) + migration curve (single series, 0-100%).
+  const wk = v.weekly;
+  const wkLabels = wk.map(w => w.week.slice(5));
+  destroyChart("vsWeekly");
+  charts.vsWeekly = new Chart($("#chart-vs-weekly"), {
+    type: "bar",
+    data: { labels: wkLabels, datasets: ["claude", "codex"].map(p => ({
+      label: PROVIDER_LABELS[p], data: wk.map(w => w[`${p}_usd`]),
+      backgroundColor: hexA(PROVIDER_COLORS[p], 0.8), borderColor: "#fff", borderWidth: 1,
+      borderRadius: 3, stack: "s",
+    })) },
+    options: vsChartOpts({
+      plugins: { legend: { display: true, position: "bottom" },
+                 tooltip: { callbacks: { label: c => `${c.dataset.label}: ${fmtUsd(c.parsed.y)}` } } },
+      scales: { x: { stacked: true, ticks: { autoSkip: true, maxTicksLimit: 16 } },
+                y: { stacked: true, ticks: { callback: v => "$" + v } } },
+    }),
+  });
+  destroyChart("vsShare");
+  charts.vsShare = new Chart($("#chart-vs-share"), {
+    type: "line",
+    data: { labels: wkLabels, datasets: [{
+      label: "Codex share", data: wk.map(w => w.codex_share_pct),
+      borderColor: PROVIDER_COLORS.codex, backgroundColor: hexA(PROVIDER_COLORS.codex, 0.12),
+      borderWidth: 2, pointRadius: 3, fill: "origin", tension: 0.25, spanGaps: true,
+    }, {
+      label: "even split", data: wk.map(() => 50), borderColor: "rgb(148,163,184)",
+      borderDash: [4, 4], borderWidth: 1, pointRadius: 0, fill: false,
+    }] },
+    options: vsChartOpts({
+      plugins: { legend: { display: false },
+                 tooltip: { callbacks: { label: c => c.datasetIndex ? "" : `Codex: ${c.parsed.y == null ? "—" : c.parsed.y.toFixed(0) + "%"} of spend` } } },
+      scales: { y: { min: 0, max: 100, ticks: { callback: v => v + "%" } },
+                x: { ticks: { autoSkip: true, maxTicksLimit: 16 } } },
+    }),
+  });
+
+  // Circadian: each tool's hourly share of its own total.
+  const hrs = v.by_hour;
+  const tot = p => hrs.reduce((a, h) => a + h[`${p}_usd`], 0) || 1;
+  destroyChart("vsHours");
+  charts.vsHours = new Chart($("#chart-vs-hours"), {
+    type: "bar",
+    data: { labels: hrs.map(h => String(h.hour).padStart(2, "0")), datasets: ["claude", "codex"].map(p => {
+      const t = tot(p);
+      return { label: PROVIDER_LABELS[p], data: hrs.map(h => 100 * h[`${p}_usd`] / t),
+               backgroundColor: hexA(PROVIDER_COLORS[p], 0.8), borderRadius: 3,
+               categoryPercentage: 0.8, barPercentage: 0.9 };
+    }) },
+    options: vsChartOpts({
+      plugins: { legend: { display: true, position: "bottom" },
+                 tooltip: { callbacks: { title: c => `${c[0].label}:00`, label: c => `${c.dataset.label}: ${c.parsed.y.toFixed(1)}% of its spend` } } },
+      scales: { y: { ticks: { callback: v => v + "%" } } },
+    }),
+  });
+
+  // Tool mix: horizontal grouped bars, top categories.
+  const mix = v.tool_mix.slice(0, 10);
+  destroyChart("vsTools");
+  charts.vsTools = new Chart($("#chart-vs-tools"), {
+    type: "bar",
+    data: { labels: mix.map(m => m.category), datasets: ["claude", "codex"].map(p => ({
+      label: PROVIDER_LABELS[p], data: mix.map(m => m[`${p}_pct`]),
+      backgroundColor: hexA(PROVIDER_COLORS[p], 0.8), borderRadius: 3,
+      categoryPercentage: 0.8, barPercentage: 0.9,
+    })) },
+    options: vsChartOpts({
+      indexAxis: "y",
+      interaction: { mode: "index", axis: "y", intersect: false },
+      plugins: { legend: { display: true, position: "bottom" },
+                 tooltip: { callbacks: { label: c => {
+                   const m = mix[c.dataIndex], p = c.datasetIndex ? "codex" : "claude";
+                   return `${c.dataset.label}: ${c.parsed.x.toFixed(1)}% (${fmtInt(m[p])} calls)`; } } } },
+      scales: { x: { ticks: { callback: v => v + "%" } },
+                y: { ticks: { autoSkip: false } } },
+    }),
+  });
+
+  // Projects split.
+  $("#vs-projects-sub").textContent =
+    `${v.shared_projects} shared · ${v.exclusive_projects.claude} Claude-only · ${v.exclusive_projects.codex} Codex-only. Top ${v.projects.length} by combined spend.`;
+  $("#vs-projects").innerHTML = v.projects.slice(0, 25).map(r => {
+    const t = r.claude_usd + r.codex_usd || 1;
+    return `<tr class="border-t hover:bg-slate-50 cursor-pointer" data-vs-project="${encodeURIComponent(r.project)}">
+      <td class="py-1 max-w-[180px] truncate" title="${r.project}">${r.project}</td>
+      <td class="text-right num text-xs">${r.claude_usd ? fmtUsd(r.claude_usd) : "—"}</td>
+      <td class="px-2"><div class="split-bar" style="height:8px" title="Claude ${(100 * r.claude_usd / t).toFixed(0)}% · Codex ${(100 * r.codex_usd / t).toFixed(0)}%">
+        ${r.claude_usd ? `<span style="background:var(--claude);width:${100 * r.claude_usd / t}%"></span>` : ""}
+        ${r.codex_usd ? `<span style="background:var(--codex);width:${100 * r.codex_usd / t}%"></span>` : ""}
+      </div></td>
+      <td class="text-right num text-xs">${r.codex_usd ? fmtUsd(r.codex_usd) : "—"}</td>
+    </tr>`;
+  }).join("");
+  document.querySelectorAll("[data-vs-project]").forEach(row =>
+    row.addEventListener("click", () => drillProject(decodeURIComponent(row.dataset.vsProject))));
+
+  // Handoffs.
+  const h = v.handoffs;
+  $("#vs-h-c2x").textContent = fmtInt(h.claude_to_codex);
+  $("#vs-h-x2c").textContent = fmtInt(h.codex_to_claude);
+  $("#vs-handoffs").innerHTML = h.recent.length
+    ? h.recent.slice(0, 10).map(x =>
+        `<li class="flex justify-between gap-2 border-t pt-1">
+           <span class="truncate" title="${x.project}"><span class="dot dot-${x.from}"></span>→<span class="dot dot-${x.to}" style="margin-left:6px"></span>${x.project}</span>
+           <span class="text-slate-500 whitespace-nowrap">${fmtDateTime(x.at)} · ${Math.round(x.gap_min)}m gap</span>
+         </li>`).join("")
+    : `<li class="text-slate-500">No switches between tools on the same project within the gap.</li>`;
+
+  // Effort ladder + models.
+  $("#vs-effort").innerHTML = v.effort_ladder.length ? v.effort_ladder.map(r =>
+    `<tr class="border-t"><td class="py-1">${r.effort}</td>
+      <td class="text-right num">${fmtInt(r.turns)}</td>
+      <td class="text-right num">${fmtVs("usd_x", r.usd_per_turn)}</td>
+      <td class="text-right num">${fmtInt(Math.round(r.avg_reasoning_tokens))}</td>
+      <td class="text-right num">${fmtUsd(r.usd)}</td></tr>`).join("")
+    : `<tr><td colspan="5" class="text-slate-500 py-2">No Codex usage in this window.</td></tr>`;
+  $("#vs-models").innerHTML = v.models.map(m =>
+    `<tr class="border-t"><td class="py-1"><span class="dot dot-${m.provider}"></span>${m.model}</td>
+      <td class="text-right num">${fmtInt(m.turns)}</td>
+      <td class="text-right num">${fmtTokenShort(m.output_tokens)}</td>
+      <td class="text-right num">${fmtUsd(m.usd)}</td></tr>`).join("");
+}
+
+async function loadCodexQuota() {
+  const sec = $("#cq-section");
+  if (PROVIDER === "claude") { sec.classList.add("hidden"); return; }
+  let L;
+  try { L = await api("/api/codex_limits"); } catch (e) { sec.classList.add("hidden"); return; }
+  if (!L.windows || !L.windows.length) { sec.classList.add("hidden"); return; }
+  sec.classList.remove("hidden");
+  $("#cq-caption").textContent = `${fmtInt(L.n_samples)} meter readings · all hosts (per-account)`;
+
+  $("#cq-current").innerHTML = L.current.length ? L.current.map(c => {
+    const used = Math.min(100, c.used_pct);
+    const proj = c.projected_used_pct_at_reset;
+    const projW = proj != null ? Math.max(0, Math.min(100, proj) - used) : 0;
+    const pace = c.projected_exhaustion
+      ? `<span class="text-rose-700 font-medium">⚠ on pace to run out ${fmtDateTime(c.projected_exhaustion)}</span>`
+      : (proj != null ? `on pace for ~${proj.toFixed(0)}% by reset` : "");
+    return `<div>
+      <div class="flex flex-wrap justify-between gap-2 text-sm mb-1">
+        <span><strong>${c.window}</strong> window <span class="text-slate-500">(${c.plan || "plan ?"})</span></span>
+        <span class="num"><strong>${c.used_pct.toFixed(0)}%</strong> used
+          ${c.typical_full_usd ? `<span class="text-slate-500">≈ ${fmtUsd(c.used_pct / 100 * c.typical_full_usd)} of ~${fmtUsd(c.typical_full_usd)}</span>` : ""}</span>
+      </div>
+      <div class="meter" role="img" aria-label="${c.used_pct.toFixed(0)}% used${proj != null ? `, projected ${proj.toFixed(0)}% at reset` : ""}">
+        <div class="fill" style="width:${used}%"></div>
+        ${projW ? `<div class="proj" style="left:${used}%;width:${projW}%"></div>` : ""}
+      </div>
+      <div class="flex flex-wrap justify-between gap-2 text-xs text-slate-500 mt-1">
+        <span>resets ${fmtDateTime(c.resets_at)} (in ${c.hours_to_reset.toFixed(1)} h) · burning ${fmtUsd(c.burn_usd_per_hour_24h)}/h over the last 24 h</span>
+        <span>${pace}</span>
+      </div>
+    </div>`;
+  }).join("") : `<div class="text-sm text-slate-500">No open window right now; the next Codex request starts one.</div>`;
+
+  $("#cq-plans").innerHTML = L.by_plan.map(r =>
+    `<tr class="border-t"><td class="py-1">${r.plan || "—"}</td><td>${r.window}</td>
+      <td class="text-right num">${r.n_windows}</td>
+      <td class="text-right num font-medium">${fmtUsd(r.median_full_usd)}</td>
+      <td class="text-right num text-xs text-slate-500">${fmtUsd(r.min_full_usd)} – ${fmtUsd(r.max_full_usd)}</td></tr>`).join("")
+    || `<tr><td colspan="5" class="text-slate-500 py-2">No window has enough readings yet.</td></tr>`;
+
+  const verdictTone = v => v === "nailed it" ? "text-emerald-700" : v === "close" ? "text-amber-700" : "text-rose-700";
+  $("#cq-calibration").innerHTML = Object.entries(L.calibration).map(([w, c]) => `
+    <div class="border rounded p-3">
+      <div class="flex justify-between"><strong>${w}</strong><span class="${verdictTone(c.verdict)} font-medium">${c.verdict}</span></div>
+      <div class="grid grid-cols-3 gap-2 mt-2 text-xs">
+        <div><div class="text-slate-500">measured</div><div class="num text-base">${fmtUsd(c.measured_full_usd)}</div></div>
+        <div><div class="text-slate-500">inferred ceiling</div><div class="num text-base">${c.inferred_ceiling_usd != null ? fmtUsd(c.inferred_ceiling_usd) : "none claimed"}</div></div>
+        <div><div class="text-slate-500">inferred lower bound</div><div class="num text-base">${fmtUsd(c.inferred_lower_bound_usd)}</div></div>
+      </div>
+      ${c.lower_bound_pct_of_truth != null && c.lower_bound_pct_of_truth > 105
+        ? `<div class="text-xs text-slate-600 mt-2">The "lower bound" came out at ${c.lower_bound_pct_of_truth.toFixed(0)}% of the real window. Windows that reset early, and resets that don't line up with the first request, let one fixed block of that length hold more than a single window's worth, so the Claude-side \"lower bound\" can overshoot. Read it as a rough size, not a floor.</div>`
+        : ""}
+    </div>`).join("") || `<div class="text-slate-500">Needs at least one well-sampled window.</div>`;
+
+  const wk = L.windows.filter(w => w.window === "weekly" && w.implied_full_usd != null && w.implied_full_usd > 0);
+  destroyChart("cqHistory");
+  charts.cqHistory = new Chart($("#chart-cq-history"), {
+    type: "line",
+    data: { labels: wk.map(w => fmtDateTime(w.start)), datasets: [{
+      label: "implied full weekly window",
+      data: wk.map(w => w.implied_full_usd),
+      borderColor: PROVIDER_COLORS.codex, borderWidth: 2, tension: 0.2,
+      pointRadius: wk.map(w => w.reliable ? 4 : 3),
+      pointBackgroundColor: wk.map(w => w.reliable ? PROVIDER_COLORS.codex : "#fff"),
+      pointBorderColor: PROVIDER_COLORS.codex, fill: false,
+    }] },
+    options: vsChartOpts({
+      plugins: { legend: { display: false },
+                 tooltip: { callbacks: { label: c => {
+                   const w = wk[c.dataIndex];
+                   return [`full window ≈ ${fmtUsd(w.implied_full_usd)}${w.reliable ? "" : " (few readings)"}`,
+                           `peak ${w.max_used_pct.toFixed(0)}% for ${fmtUsd(w.usd)} · ${w.plan || "plan ?"}`];
+                 } } } },
+      scales: { y: { beginAtZero: true, ticks: { callback: v => "$" + v } },
+                x: { ticks: { autoSkip: true, maxTicksLimit: 12 } } },
+    }),
+  });
+}
+
 async function loadOverview() {
   const cmp = compareMeta();
   const s = await api(`/api/summary?since=${since()}${hostQ()}`);
@@ -1579,6 +2172,8 @@ async function loadOverview() {
   } else {
     clearDeltas();
   }
+
+  renderProviderSplit();
 
   // Cache savings + burn rate tiles fire in parallel
   api(`/api/cache_savings?since=${since()}${hostQ()}`).then(cs => {
@@ -2384,6 +2979,11 @@ async function rollFilm() {
 }
 
 async function loadQuotas() {
+  loadCodexQuota();
+  const showClaude = PROVIDER !== "codex";
+  $("#q-claude").classList.toggle("hidden", !showClaude);
+  $("#q-claude-heading").classList.toggle("hidden", !showClaude);
+  if (!showClaude) return;
   const metric = $("#q-metric").value;
   const q = await api(`/api/quota?metric=${metric}`);
 
@@ -2448,8 +3048,10 @@ async function loadQuotas() {
 }
 
 setTimezoneLabel();
-loadMeta();
-loadOverview();
+initProviderSwitch().then(() => {
+  loadMeta();
+  loadOverview();
+});
 </script>
 </body>
 </html>

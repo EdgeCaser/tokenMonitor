@@ -46,16 +46,38 @@ class _DebouncedHandler(FileSystemEventHandler):
             self._kick()
 
 
+def _watch_dirs(projects_dir: Path | None) -> list[Path]:
+    """Directories to observe. For a Codex home, only sessions/ and
+    archived_sessions/: the rest of ~/.codex is SQLite state that churns on
+    every keystroke and would keep the debouncer permanently armed."""
+    if projects_dir is not None:
+        return [projects_dir]
+    from . import config as cfg_mod
+    dirs: list[Path] = []
+    for path, _host, provider in cfg_mod.iter_roots(cfg_mod.load().all_roots()):
+        if provider == "codex":
+            subs = [path / "sessions", path / "archived_sessions"]
+            dirs.extend(d for d in subs if d.is_dir())
+            if not any(d.is_dir() for d in subs):
+                dirs.append(path)
+        else:
+            dirs.append(path)
+    return dirs
+
+
 def watch(projects_dir: Path | None = None):
-    projects_dir = projects_dir or I.DEFAULT_PROJECTS_DIR
-    if not projects_dir.exists():
-        print(f"[tokmon.watch] no projects dir at {projects_dir}")
+    dirs = [d for d in _watch_dirs(projects_dir) if d.exists()]
+    if not dirs:
+        print(f"[tokmon.watch] nothing to watch (no projects dir at {projects_dir or I.DEFAULT_PROJECTS_DIR})")
         return
     handler = _DebouncedHandler()
     obs = Observer()
-    obs.schedule(handler, str(projects_dir), recursive=True)
+    for d in dirs:
+        obs.schedule(handler, str(d), recursive=True)
     obs.start()
-    print(f"[tokmon.watch] watching {projects_dir} (Ctrl-C to stop)")
+    for d in dirs:
+        print(f"[tokmon.watch] watching {d}")
+    print("[tokmon.watch] Ctrl-C to stop")
     handler._run()
     try:
         while True:

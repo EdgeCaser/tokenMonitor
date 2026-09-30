@@ -2,14 +2,27 @@
 
 from __future__ import annotations
 
+import importlib.util
 import os
 import socket
+import sys
 import time
 
-import duckdb
 from pathlib import Path
 
-DEFAULT_DB_PATH = Path.home() / ".tokmon" / "tokmon.duckdb"
+# DuckDB's Python client probes for pandas on every execute() with parameters
+# (4 imports per call in duckdb 1.5). Without pandas installed, each probe is a
+# failed import that re-scans every sys.path entry: ~0.6 ms per statement,
+# which made a multi-GB Codex ingest take tens of minutes. Recording pandas as
+# absent makes those imports fail instantly. Only done when pandas truly isn't
+# installed, so nothing that could use it loses it.
+if "pandas" not in sys.modules and importlib.util.find_spec("pandas") is None:
+    sys.modules["pandas"] = None  # type: ignore[assignment]
+
+import duckdb  # noqa: E402
+
+# TOKMON_DB points every command (and the server) at another database file.
+DEFAULT_DB_PATH = Path(os.environ.get("TOKMON_DB") or (Path.home() / ".tokmon" / "tokmon.duckdb"))
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS turns (
@@ -38,7 +51,10 @@ CREATE TABLE IF NOT EXISTS turns (
     raw_usage         VARCHAR,
     source_file       VARCHAR NOT NULL,
     source_offset     BIGINT NOT NULL,
-    host              VARCHAR NOT NULL DEFAULT 'local'
+    host              VARCHAR NOT NULL DEFAULT 'local',
+    provider          VARCHAR NOT NULL DEFAULT 'claude',
+    reasoning_tokens  BIGINT NOT NULL DEFAULT 0,
+    reasoning_effort  VARCHAR
 );
 
 CREATE TABLE IF NOT EXISTS tool_calls (
@@ -54,7 +70,8 @@ CREATE TABLE IF NOT EXISTS user_turns (
     session_id   VARCHAR NOT NULL,
     project_path VARCHAR NOT NULL,
     ts           TIMESTAMP NOT NULL,
-    source_file  VARCHAR NOT NULL
+    source_file  VARCHAR NOT NULL,
+    is_prompt    BOOLEAN
 );
 
 CREATE TABLE IF NOT EXISTS ingest_log (
@@ -63,6 +80,32 @@ CREATE TABLE IF NOT EXISTS ingest_log (
     last_offset        BIGINT  NOT NULL,
     last_ingested_at   TIMESTAMP NOT NULL,
     malformed_lines    BIGINT NOT NULL DEFAULT 0
+);
+
+-- Parser state for sources whose records need context from earlier in the
+-- file (Codex rollouts put model/cwd/session in header records), so an
+-- incremental resume at last_offset can pick up where it left off.
+CREATE TABLE IF NOT EXISTS ingest_state (
+    source_file  VARCHAR PRIMARY KEY,
+    state        VARCHAR NOT NULL
+);
+
+-- Codex writes the account's live rate-limit meter into its logs. Only the
+-- change points are kept (a new row whenever used% or the reset moves).
+CREATE TABLE IF NOT EXISTS rate_limit_samples (
+    provider          VARCHAR NOT NULL,
+    host              VARCHAR NOT NULL,
+    ts                TIMESTAMP NOT NULL,
+    session_id        VARCHAR NOT NULL,
+    limit_id          VARCHAR NOT NULL,
+    plan_type         VARCHAR,
+    window_name       VARCHAR NOT NULL,   -- 'primary' | 'secondary'
+    window_minutes    INT,
+    used_percent      DOUBLE NOT NULL,
+    resets_at         TIMESTAMP,
+    reached_type      VARCHAR,            -- set when Codex reported the limit as hit
+    source_file       VARCHAR NOT NULL,
+    PRIMARY KEY (session_id, limit_id, window_name, ts)
 );
 
 CREATE INDEX IF NOT EXISTS idx_turns_session   ON turns(session_id);
@@ -89,6 +132,42 @@ def _migrate_add_host_column(conn) -> None:
         conn.execute("ALTER TABLE turns ADD COLUMN host VARCHAR;")
         conn.execute("UPDATE turns SET host = ? WHERE host IS NULL;", [local_label])
     conn.execute("CREATE INDEX IF NOT EXISTS idx_turns_host ON turns(host);")
+
+
+def _migrate_add_provider_columns(conn) -> None:
+    """Add the multi-provider columns to DBs created when tokmon was
+    Claude-only. Every pre-existing row came from Claude Code."""
+    cols = {r[0] for r in conn.execute(
+        "SELECT column_name FROM information_schema.columns "
+        "WHERE table_name = 'turns'"
+    ).fetchall()}
+    if "provider" not in cols:
+        conn.execute("ALTER TABLE turns ADD COLUMN provider VARCHAR DEFAULT 'claude';")
+        conn.execute("UPDATE turns SET provider = 'claude' WHERE provider IS NULL;")
+    if "reasoning_tokens" not in cols:
+        conn.execute("ALTER TABLE turns ADD COLUMN reasoning_tokens BIGINT DEFAULT 0;")
+        conn.execute("UPDATE turns SET reasoning_tokens = 0 WHERE reasoning_tokens IS NULL;")
+    if "reasoning_effort" not in cols:
+        conn.execute("ALTER TABLE turns ADD COLUMN reasoning_effort VARCHAR;")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_turns_provider ON turns(provider);")
+
+    ucols = {r[0] for r in conn.execute(
+        "SELECT column_name FROM information_schema.columns "
+        "WHERE table_name = 'user_turns'"
+    ).fetchall()}
+    if "is_prompt" not in ucols:
+        # Older rows can't be classified after the fact, so drop them and
+        # rewind the Claude files: the next ingest re-reads them, re-creating
+        # user_turns with the flag. Turn inserts skip existing uuids, so the
+        # re-read adds nothing else. (Codex files keep their offsets; their
+        # user turns are always prompts.)
+        conn.execute("ALTER TABLE user_turns ADD COLUMN is_prompt BOOLEAN;")
+        conn.execute("DELETE FROM user_turns WHERE uuid NOT LIKE 'codex-user:%';")
+        conn.execute("UPDATE user_turns SET is_prompt = TRUE;")
+        conn.execute(
+            "DELETE FROM ingest_log WHERE source_file NOT IN "
+            "(SELECT source_file FROM ingest_state)"
+        )
 
 
 def _migrate_normalize_project_labels(conn) -> None:
@@ -148,6 +227,7 @@ def connect(
         boot = duckdb.connect(str(path))
         boot.execute(SCHEMA_SQL)
         _migrate_add_host_column(boot)
+        _migrate_add_provider_columns(boot)
         boot.close()
     # DuckDB allows only one open connection to a file across processes: while
     # the writer (ingest) holds it, readers are refused, and vice versa. Both
@@ -180,6 +260,7 @@ def connect(
     if not read_only:
         conn.execute(SCHEMA_SQL)
         _migrate_add_host_column(conn)
+        _migrate_add_provider_columns(conn)
         _migrate_normalize_project_labels(conn)
     return conn
 
@@ -191,5 +272,7 @@ def reset(db_path: Path | None = None) -> None:
     conn.execute("DROP TABLE IF EXISTS turns;")
     conn.execute("DROP TABLE IF EXISTS user_turns;")
     conn.execute("DROP TABLE IF EXISTS ingest_log;")
+    conn.execute("DROP TABLE IF EXISTS ingest_state;")
+    conn.execute("DROP TABLE IF EXISTS rate_limit_samples;")
     conn.execute(SCHEMA_SQL)
     conn.close()

@@ -45,6 +45,11 @@ class TurnRecord(BaseModel):
     source_file: str
     source_offset: int
     host: str = "local"
+    provider: str = "claude"
+    # Subset of output_tokens spent on hidden reasoning. Codex reports it;
+    # Claude transcripts don't, so it stays 0 there.
+    reasoning_tokens: int = 0
+    reasoning_effort: str | None = None
 
     tool_calls: list[ToolCallRecord] = Field(default_factory=list)
 
@@ -55,3 +60,6 @@ class UserTurnRecord(BaseModel):
     project_path: str
     ts: datetime
     source_file: str
+    # A message the human typed (vs. a tool result, slash-command echo, or
+    # injected meta/skill text, which Claude Code also logs as type=user).
+    is_prompt: bool = True

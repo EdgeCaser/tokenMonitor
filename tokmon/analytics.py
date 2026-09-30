@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -10,7 +11,12 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 import duckdb
 
 from .db import connect
-from .pricing import load_rate_periods, load_rates
+from .pricing import (
+    CODEX_FALLBACK_MODEL,
+    OPENAI_PRICING_URL,
+    load_rate_periods,
+    load_rates,
+)
 
 
 def _register_pricing(conn: duckdb.DuckDBPyConnection) -> None:
@@ -56,6 +62,18 @@ def _register_pricing(conn: duckdb.DuckDBPyConnection) -> None:
             "https://claude.com/pricing", "unknown model fallback",
         ],
     )
+    codex = load_rates()[CODEX_FALLBACK_MODEL]
+    conn.execute(
+        """
+        INSERT INTO _pricing VALUES
+        ('<fallback:codex>', DATE '1970-01-01', NULL, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        [
+            codex.input, codex.output,
+            codex.cache_write_5m, codex.cache_write_1h, codex.cache_read,
+            OPENAI_PRICING_URL, f"unknown Codex model fallback ({CODEX_FALLBACK_MODEL})",
+        ],
+    )
     conn.execute(
         """
         INSERT INTO _pricing VALUES
@@ -67,21 +85,32 @@ def _register_pricing(conn: duckdb.DuckDBPyConnection) -> None:
 VIEW_SQL = """
 -- Claude transcripts can repeat one API request under several message UUIDs.
 -- Billing/reporting should count the fullest observed row for each request_id.
-CREATE OR REPLACE TEMP VIEW v_billable_turns AS
+-- v_all_* views see every provider; the unprefixed views apply the
+-- connection's provider lens (see connect_with_views), so every report
+-- honors a Claude/Codex filter without each query having to know about it.
+CREATE OR REPLACE TEMP VIEW v_all_billable_turns AS
 SELECT *
-FROM turns
+FROM __TURNS_SRC__
 QUALIFY ROW_NUMBER() OVER (
     PARTITION BY COALESCE(NULLIF(request_id, ''), uuid)
     ORDER BY (input_tokens + output_tokens + cache_write_5m + cache_write_1h + cache_read) DESC,
              ts, uuid
 ) = 1;
 
-CREATE OR REPLACE TEMP VIEW v_billable_tool_calls AS
+CREATE OR REPLACE TEMP VIEW v_billable_turns AS
+SELECT * FROM v_all_billable_turns __LENS__;
+
+CREATE OR REPLACE TEMP VIEW v_billable_tool_calls_all AS
 SELECT DISTINCT tc.turn_uuid, tc.idx, tc.tool_name, tc.input_chars, tc.input_preview
 FROM tool_calls tc
+JOIN v_all_billable_turns t ON t.uuid = tc.turn_uuid;
+
+CREATE OR REPLACE TEMP VIEW v_billable_tool_calls AS
+SELECT tc.*
+FROM v_billable_tool_calls_all tc
 JOIN v_billable_turns t ON t.uuid = tc.turn_uuid;
 
-CREATE OR REPLACE TEMP VIEW v_turn_cost AS
+CREATE OR REPLACE TEMP VIEW v_turn_cost_all AS
 SELECT
     t.uuid,
     t.session_id,
@@ -92,6 +121,9 @@ SELECT
     t.ts,
     t.is_sidechain,
     t.host,
+    t.provider,
+    t.reasoning_tokens,
+    t.reasoning_effort,
     t.input_tokens,
     t.output_tokens,
     t.cache_write_5m,
@@ -113,12 +145,16 @@ SELECT
     COALESCE(p.effective_to, f.effective_to) AS price_effective_to,
     COALESCE(p.source_url, f.source_url) AS price_source_url,
     COALESCE(p.note, f.note) AS price_note
-FROM v_billable_turns t
+FROM v_all_billable_turns t
 LEFT JOIN _pricing p
   ON p.model = t.model
  AND CAST(t.ts AS DATE) >= p.effective_from
  AND (p.effective_to IS NULL OR CAST(t.ts AS DATE) < p.effective_to)
-CROSS JOIN (SELECT * FROM _pricing WHERE model = '<fallback>') f;
+JOIN _pricing f
+  ON f.model = CASE WHEN t.provider = 'codex' THEN '<fallback:codex>' ELSE '<fallback>' END;
+
+CREATE OR REPLACE TEMP VIEW v_turn_cost AS
+SELECT * FROM v_turn_cost_all __LENS__;
 
 CREATE OR REPLACE TEMP VIEW v_session_summary AS
 SELECT
@@ -202,13 +238,65 @@ GROUP BY model;
 """
 
 
+PROVIDERS = ("claude", "codex")
+
+
+def normalize_provider(provider: str | None) -> str | None:
+    """None/'all'/'' -> None (no lens); otherwise a validated provider id."""
+    if provider is None:
+        provider = os.environ.get("TOKMON_PROVIDER")
+    p = (provider or "").strip().lower()
+    if p in ("", "all", "both", "any"):
+        return None
+    if p not in PROVIDERS:
+        raise ValueError(f"unknown provider {provider!r}; expected all, {', '.join(PROVIDERS)}")
+    return p
+
+
+def _turns_source(conn: duckdb.DuckDBPyConnection) -> str:
+    """`turns`, or a shim adding the multi-provider columns when a read-only
+    connection opens a DB that ingest hasn't migrated yet."""
+    cols = {r[0] for r in conn.execute(
+        "SELECT column_name FROM information_schema.columns WHERE table_name = 'turns'"
+    ).fetchall()}
+    extras = []
+    if "provider" not in cols:
+        extras.append("'claude' AS provider")
+    if "reasoning_tokens" not in cols:
+        extras.append("CAST(0 AS BIGINT) AS reasoning_tokens")
+    if "reasoning_effort" not in cols:
+        extras.append("CAST(NULL AS VARCHAR) AS reasoning_effort")
+    if not extras:
+        return "turns"
+    return f"(SELECT *, {', '.join(extras)} FROM turns)"
+
+
+def apply_lens(conn: duckdb.DuckDBPyConnection, provider: str | None) -> str | None:
+    """(Re)build the views with a provider lens. Returns the lens applied."""
+    lens = normalize_provider(provider)
+    where = f"WHERE provider = '{lens}'" if lens else ""
+    conn.execute(
+        VIEW_SQL
+        .replace("__TURNS_SRC__", _turns_source(conn))
+        .replace("__LENS__", where)
+    )
+    return lens
+
+
 def connect_with_views(
     db_path: Path | None = None,
     read_only: bool = False,
+    provider: str | None = None,
 ) -> duckdb.DuckDBPyConnection:
+    """Connection with pricing + analytics views.
+
+    `provider` ('claude' | 'codex' | 'all'/None) scopes every unprefixed view.
+    When omitted, the TOKMON_PROVIDER env var is honored (the CLI's global
+    --provider flag sets it).
+    """
     conn = connect(db_path, read_only=read_only)
     _register_pricing(conn)
-    conn.execute(VIEW_SQL)
+    apply_lens(conn, provider)
     return conn
 
 
@@ -443,6 +531,14 @@ def spend_by(
                 GROUP BY tool_name ORDER BY calls DESC LIMIT 50
             """
             params = []
+    elif dimension == "provider":
+        q = f"""
+            SELECT provider, COUNT(DISTINCT session_id) AS sessions, COUNT(*) AS turns,
+                   SUM(input_tokens+output_tokens+cache_write_5m+cache_write_1h+cache_read) AS tokens,
+                   SUM(total_usd) AS usd
+            FROM v_turn_cost {where}
+            GROUP BY provider ORDER BY usd DESC LIMIT {limit}
+        """
     elif dimension == "host":
         q = f"""
             SELECT host, COUNT(DISTINCT session_id) AS sessions, COUNT(*) AS turns,
@@ -469,12 +565,14 @@ def grouped_timeseries(
 ) -> list[tuple]:
     """Spend over time, optionally stacked by host/project.
 
-    `bucket` is hour/day/week/month. `stack` is none/model/host/project/host_project.
+    `bucket` is hour/day/week/month. `stack` is none/model/host/project/
+    host_project/provider/provider_model.
     The bucket is computed in the requested display timezone.
     """
     if bucket not in {"hour", "day", "week", "month"}:
         raise ValueError(f"unknown bucket: {bucket}")
-    if stack not in {"none", "model", "host", "project", "host_project"}:
+    if stack not in {"none", "model", "host", "project", "host_project",
+                     "provider", "provider_model"}:
         raise ValueError(f"unknown stack: {stack}")
     limit = max(1, min(int(limit), 2000))
     series_limit = max(1, min(int(series_limit), 50))
@@ -487,6 +585,8 @@ def grouped_timeseries(
         "host": "host",
         "project": "project_label",
         "host_project": "host || ' / ' || project_label",
+        "provider": "provider",
+        "provider_model": "provider || ' / ' || model",
     }[stack]
 
     top_series_cte = ""
@@ -1502,12 +1602,14 @@ def quota_inference(
         "total_usd" if metric == "usd"
         else "(input_tokens + output_tokens + cache_write_5m + cache_write_1h + cache_read)"
     )
-    where = "WHERE host = ?" if host else ""
+    # Claude plan quotas only. Codex usage runs against a separate account
+    # meter, which it logs directly (see versus.codex_limits).
+    where = "WHERE provider = 'claude'" + (" AND host = ?" if host else "")
     params = [host] if host else []
     rows = conn.execute(
         f"""
         SELECT ts, model, session_id, {value_expr} AS val
-        FROM v_turn_cost
+        FROM v_turn_cost_all
         {where}
         ORDER BY ts
         """,
@@ -1516,8 +1618,11 @@ def quota_inference(
 
     notes = [
         "Quotas are inferred, not measured: Claude Code transcripts carry no "
-        "rate-limit headers. Peak window usage is a hard lower bound; a ceiling "
-        "estimate appears only when near-peak windows cluster or repeat at reset.",
+        "rate-limit headers. Peak usage in a reset-anchored block is a lower bound "
+        "only if the real windows line up with those blocks; run blind on Codex, "
+        "where the meter is logged, it overshot the true window (see the Codex "
+        "section). A ceiling estimate appears only when near-peak windows "
+        "cluster or repeat at reset.",
         "Unit is API-$ equivalent — the closest available proxy for Anthropic's "
         "internal quota accounting, not an official quota unit."
         if metric == "usd" else

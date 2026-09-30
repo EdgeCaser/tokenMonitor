@@ -1,6 +1,6 @@
 # tokmon
 
-Local analytics for Claude Code token usage.
+Local analytics for Claude Code and OpenAI Codex token usage.
 
 ![tokmon dashboard overview](docs/dashboard-overview.png)
 
@@ -13,12 +13,12 @@ Local analytics for Claude Code token usage.
 
 > The screenshots above use synthetic sample data, not real usage.
 
-`tokmon` reads the transcript files that Claude Code already writes to your
-computer, loads the usage data into a small local database, and gives you a
+`tokmon` reads the transcript files that Claude Code and Codex already write to
+your computer, loads the usage data into a small local database, and gives you a
 clean web dashboard and command-line reports showing where your tokens (and
 dollars) actually go: by project, model, session, branch, tool, and time of day.
-You can run it on a single computer, or have several computers feed one shared
-dashboard.
+Look at either tool on its own, both together, or put them head to head. You can
+run it on a single computer, or have several computers feed one shared dashboard.
 
 Everything runs on your own machines. Nothing is sent to any third party.
 
@@ -108,8 +108,13 @@ the activate step again: `source .venv/bin/activate` on macOS/Linux, or
 tokmon ingest
 ```
 
-This reads `~/.claude/projects/` (where Claude Code keeps its transcripts) and
-builds the database. Re-run it any time to pick up new activity.
+This reads `~/.claude/projects/` (where Claude Code keeps its transcripts) and,
+if you use Codex, `~/.codex/sessions/` and `~/.codex/archived_sessions/`, then
+builds the database. Re-run it any time to pick up new activity. Codex is found
+automatically; there's nothing to configure.
+
+The first Codex ingest can take a few minutes if you have months of history
+(a few GB of logs is normal). After that, only new data is read.
 
 ### 4. Open the dashboard
 
@@ -252,6 +257,8 @@ hub in Option 2):
 ```bash
 tokmon summary               # headline totals
 tokmon spend --by project    # project | model | day | hour | session | tool | host
+tokmon versus                # Claude Code vs Codex, head to head
+tokmon limits                # Codex's rate-limit meter, in API dollars
 tokmon top --metric cost     # biggest single turns by cost | tokens | ...
 tokmon cache                 # how much caching is saving you
 tokmon tools                 # which tools cost the most
@@ -262,6 +269,47 @@ tokmon serve                 # the web dashboard
 ```
 
 Add `--help` to any command to see its options.
+
+---
+
+## Claude Code and Codex
+
+tokmon treats the two tools as one dataset with a `provider` label on every row.
+
+- **Filter.** The switch at the top of the dashboard (all tools / Claude / Codex)
+  scopes every tab. On the command line, put `--provider claude` or
+  `--provider codex` before any command (`tokmon --provider codex summary`), or
+  set `TOKMON_PROVIDER`.
+- **Compare.** The **Versus** tab, or `tokmon versus`, puts them side by side on
+  the same pricing basis: spend, $ per prompt, cache hit rate, what the tool
+  calls are spent on, which projects each one owns, how often you switch from one
+  to the other mid-task, and a week-by-week share chart. The Spend tab can also
+  stack by tool.
+- **Codex rate limits.** Codex writes your account's rate-limit meter into its
+  logs, so the Quotas tab (and `tokmon limits`) shows the real usage percentage,
+  when the window resets, whether you're on pace to run out, and what a full
+  window is worth in API dollars for your plan. The same inference tokmon uses
+  for Claude's unpublished limits is then run on Codex data and graded against
+  the real meter, so you can see how far to trust it.
+
+How Codex usage is counted:
+
+- Prices come from OpenAI's API price list and are in `tokmon/pricing.py`
+  (override them in `tokmon/pricing.toml` like any other model).
+  `codex-auto-review` is priced as the model it maps to on each date.
+- Cached input is stored as cache reads, so the cache views work for both
+  tools. Reasoning tokens are kept as a separate figure inside output tokens.
+- Subagent and auto-review threads roll up into the session that started them,
+  the same way Claude Code subagents do.
+- A "prompt" is a message you typed (Claude Code) or a task you started
+  (Codex). Tool results and injected context don't count.
+
+**Several computers:** `tokmon push` now also sends `~/.codex/sessions` and
+`~/.codex/archived_sessions` to the hub, next to the Claude transcripts
+(`sync/<host>/.codex/`). The hub picks them up on its next ingest without any
+config change. Skip it with `tokmon push --no-codex`. A Codex home somewhere
+unusual can be added by hand:
+`tokmon roots add /path/to/.codex --host laptop --provider codex`.
 
 ---
 
@@ -286,7 +334,9 @@ Add `--help` to any command to see its options.
   in its terminal, and that you used `http://127.0.0.1:8765` (Option 1) or the
   hub's address (Option 2).
 - **Dashboard is empty** — run `tokmon ingest` at least once. If you've never
-  used Claude Code on that machine, there's nothing to show yet.
+  used Claude Code or Codex on that machine, there's nothing to show yet.
+- **No Codex data:** `tokmon roots list` shows where tokmon looks. Codex is
+  expected at `~/.codex` (or `$CODEX_HOME`) next to `~/.claude/projects`.
 - **Windows: "running scripts is disabled"** — run
   `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`, then retry.
 - **Option 2: "SSH failed"** — confirm you can run
@@ -305,7 +355,8 @@ For each assistant turn, tokmon records token counts, the dollar equivalent
 like project, git branch, session, and host. It also keeps lightweight signals
 such as character counts and short previews of tool-call inputs.
 
-It does **not** store your prompts or Claude's responses. The database
+It does **not** store your prompts or the models' responses. For Codex it
+also records the rate-limit meter readings (percent used, reset time, plan). The database
 (`tokmon.duckdb`) stays on your machine and is never uploaded; it's also excluded
 from version control.
 

@@ -50,7 +50,8 @@ def test_billable_views_dedupe_duplicate_request_ids(loaded):
                output_tokens, cache_write_5m, cache_write_1h, cache_read,
                service_tier, stop_reason, has_thinking, thinking_chars,
                text_chars, web_search_requests, web_fetch_requests, raw_usage,
-               source_file, source_offset + 1, host
+               source_file, source_offset + 1, host,
+               provider, reasoning_tokens, reasoning_effort
         FROM turns WHERE uuid = 'a1'
         """
     )
@@ -63,7 +64,8 @@ def test_billable_views_dedupe_duplicate_request_ids(loaded):
                output_tokens, cache_write_5m, cache_write_1h, cache_read,
                service_tier, stop_reason, has_thinking, thinking_chars,
                text_chars, web_search_requests, web_fetch_requests, raw_usage,
-               source_file, source_offset + 1, host
+               source_file, source_offset + 1, host,
+               provider, reasoning_tokens, reasoning_effort
         FROM turns WHERE uuid = 'a2'
         """
     )

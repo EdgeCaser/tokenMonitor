@@ -1,7 +1,7 @@
 [project]
 name = "tokmon"
 version = "0.1.0"
-description = "Local analytics for Claude Code token usage"
+description = "Local analytics for Claude Code and Codex token usage"
 requires-python = ">=3.11"
 dependencies = [
     "duckdb>=1.1.0",
@@ -12,6 +12,8 @@ dependencies = [
     "click>=8.1.0",
     "pydantic>=2.9.0",
     "tomli>=2.0.0; python_version<'3.11'",
+    # Windows ships no IANA zone database; zoneinfo needs this for chart timezones.
+    "tzdata>=2024.1; sys_platform=='win32'",
 ]
 
 [project.optional-dependencies]

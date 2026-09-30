@@ -1,4 +1,4 @@
-"""Client-side: rsync ~/.claude/projects/ to the Pi.
+"""Client-side: rsync ~/.claude/projects/ (and ~/.codex sessions) to the Pi.
 
 Reads ~/.tokmon/sync.toml (or env vars) to find the Pi, builds an rsync command
 that copies only .jsonl files, and runs it. Used by `tokmon push` and called
@@ -10,6 +10,9 @@ Config file shape (~/.tokmon/sync.toml):
     pi_host = "raspberrypi"
     pi_path = "/home/pi"                # ~ on the Pi
     sync_subpath = "sync"               # final dest is pi_path/sync/<this-host>/.claude/projects/
+
+Codex rollouts go to pi_path/sync/<this-host>/.codex/{sessions,archived_sessions}/,
+which the Pi's ingest picks up automatically as the sibling of .claude/projects.
 """
 
 from __future__ import annotations
@@ -58,14 +61,23 @@ class SyncTarget:
     sync_subpath: str = "sync"
 
     @property
-    def remote_root(self) -> str:
-        """Full remote path: <pi_path>/<sync_subpath>/<this-host>/.claude/projects/
+    def remote_host_root(self) -> str:
+        """<pi_path>/<sync_subpath>/<this-host>/
 
         Hostname is lowercased — Linux paths are case-sensitive and tokmon
         ingest treats the directory name as the host label.
         """
         h = socket.gethostname().split(".")[0].lower()
-        return f"{self.pi_path.rstrip('/')}/{self.sync_subpath}/{h}/.claude/projects/"
+        return f"{self.pi_path.rstrip('/')}/{self.sync_subpath}/{h}/"
+
+    @property
+    def remote_root(self) -> str:
+        """Full remote path: <pi_path>/<sync_subpath>/<this-host>/.claude/projects/"""
+        return f"{self.remote_host_root}.claude/projects/"
+
+    def remote_codex(self, subdir: str) -> str:
+        """<pi_path>/<sync_subpath>/<this-host>/.codex/<subdir>/"""
+        return f"{self.remote_host_root}.codex/{subdir}/"
 
     @property
     def ssh_dest(self) -> str:
@@ -114,8 +126,12 @@ def build_rsync_cmd(
     ssh_options: list[str] | None = None,
     dry_run: bool = False,
     rsh: str | None = None,
+    dest: str | None = None,
 ) -> list[str]:
-    """Construct the rsync invocation. Pure — for tests."""
+    """Construct the rsync invocation. Pure — for tests.
+
+    `dest` overrides the remote path (default: the Claude projects root).
+    """
     cmd = ["rsync", "-a", "--partial",
            "--include=*/",
            "--include=*.jsonl",
@@ -127,7 +143,7 @@ def build_rsync_cmd(
     elif ssh_options:
         cmd.extend(["-e", "ssh " + " ".join(ssh_options)])
     cmd.append(f"{source.rstrip('/') if isinstance(source, str) else str(source).rstrip('/')}/")
-    cmd.append(f"{target.ssh_dest}:{target.remote_root}")
+    cmd.append(f"{target.ssh_dest}:{dest or target.remote_root}")
     return cmd
 
 
@@ -161,7 +177,8 @@ def _to_rsync_source(source: Path) -> str:
     return s.replace("\\", "/")
 
 
-def _ensure_remote_dir(target: SyncTarget, verbose: bool = False) -> int:
+def _ensure_remote_dir(target: SyncTarget, verbose: bool = False,
+                       extra: list[str] | None = None) -> int:
     """Pre-create the remote destination directory via SSH.
 
     Works around macOS's bundled rsync 2.6.9 not supporting --mkpath.
@@ -176,7 +193,8 @@ def _ensure_remote_dir(target: SyncTarget, verbose: bool = False) -> int:
            "-o", "ConnectTimeout=10",
            "-o", "ServerAliveInterval=5",
            "-o", "ServerAliveCountMax=2",
-           target.ssh_dest, f"mkdir -p {target.remote_root}"]
+           target.ssh_dest,
+           "mkdir -p " + " ".join([target.remote_root, *(extra or [])])]
     if verbose:
         print("running:", " ".join(cmd), file=sys.stderr)
     try:
@@ -186,26 +204,54 @@ def _ensure_remote_dir(target: SyncTarget, verbose: bool = False) -> int:
         return 124
 
 
+CODEX_SUBDIRS = ("sessions", "archived_sessions")
+
+
+def codex_sources(codex_home: Path | None = None) -> list[tuple[Path, str]]:
+    """(local dir, remote subdir) pairs for this machine's Codex rollouts."""
+    home = codex_home or Path(os.environ.get("CODEX_HOME") or (Path.home() / ".codex"))
+    return [(home / sub, sub) for sub in CODEX_SUBDIRS if (home / sub).is_dir()]
+
+
 def push(
     target: SyncTarget | None = None,
     source: Path | None = None,
     dry_run: bool = False,
     verbose: bool = False,
+    include_codex: bool = True,
 ) -> int:
-    """Execute the push. Returns rsync's exit code."""
+    """Execute the push. Returns the first non-zero rsync exit code, else 0.
+
+    Pushes ~/.claude/projects, plus ~/.codex/sessions and
+    ~/.codex/archived_sessions when present. An explicit `source` pushes
+    only that directory (as the Claude root), as before.
+    """
     target = target or load_target()
+    explicit_source = source is not None
     source = source or (Path.home() / ".claude" / "projects")
-    if not source.exists():
+    codex = [] if (explicit_source or not include_codex) else codex_sources()
+    if not source.exists() and not codex:
         print(f"tokmon push: source {source} does not exist", file=sys.stderr)
         return 1
     if not dry_run:
-        rc = _ensure_remote_dir(target, verbose=verbose)
+        rc = _ensure_remote_dir(target, verbose=verbose,
+                                extra=[target.remote_codex(sub) for _, sub in codex])
         if rc != 0:
             print(f"tokmon push: mkdir on remote failed (ssh exit {rc})", file=sys.stderr)
             return rc
-    cmd = build_rsync_cmd(target, _to_rsync_source(source), dry_run=dry_run,
-                          rsh=_default_rsh())
-    if verbose:
-        cmd.insert(1, "-v")
-        print("running:", " ".join(cmd), file=sys.stderr)
-    return subprocess.run(cmd, **_no_window_kwargs()).returncode
+    jobs: list[tuple[Path, str | None]] = []
+    if source.exists():
+        jobs.append((source, None))
+    jobs.extend((local, target.remote_codex(sub)) for local, sub in codex)
+    first_rc = 0
+    for local, dest in jobs:
+        cmd = build_rsync_cmd(target, _to_rsync_source(local), dry_run=dry_run,
+                              rsh=_default_rsh(), dest=dest)
+        if verbose:
+            cmd.insert(1, "-v")
+            print("running:", " ".join(cmd), file=sys.stderr)
+        rc = subprocess.run(cmd, **_no_window_kwargs()).returncode
+        if rc != 0:
+            print(f"tokmon push: rsync of {local} failed (exit {rc})", file=sys.stderr)
+            first_rc = first_rc or rc
+    return first_rc

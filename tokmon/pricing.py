@@ -1,9 +1,17 @@
-"""Model → $/Mtok pricing. Confirmed against the claude-api skill on 2026-06-20.
+"""Model → $/Mtok pricing.
 
-Cache pricing follows the standard Anthropic multipliers:
+Anthropic rates confirmed against the claude-api skill on 2026-06-20. Cache
+pricing follows the standard Anthropic multipliers:
   - cache write 5m  = 1.25× input
   - cache write 1h  = 2.00× input
   - cache read      = 0.10× input
+
+OpenAI rates (Codex) from https://developers.openai.com/api/docs/pricing,
+fetched 2026-09-29, standard tier, short context. OpenAI publishes the cached
+input rate directly; it lands in the cache_read column. gpt-5.6 and gpt-6
+models also bill cache writes at 1.25× input; gpt-5.4/5.5 list none. Codex
+input never approaches the >272K long-context tier (its context window is
+258K), so only short-context rates are modeled.
 """
 
 from __future__ import annotations
@@ -22,6 +30,7 @@ else:
 DEFAULT_PRICING_PATH = Path(__file__).parent / "pricing.toml"
 DEFAULT_EFFECTIVE_FROM = date(1970, 1, 1)
 ANTHROPIC_PRICING_URL = "https://claude.com/pricing"
+OPENAI_PRICING_URL = "https://developers.openai.com/api/docs/pricing"
 
 
 @dataclass(frozen=True)
@@ -33,6 +42,20 @@ class ModelRate:
     cache_write_5m: float
     cache_write_1h: float
     cache_read: float
+
+    @classmethod
+    def openai(cls, input_: float, cached: float, output: float,
+               cache_write: float | None = None) -> "ModelRate":
+        """OpenAI-style rate: explicit cached-input price; cache writes are
+        free unless the model lists a write price."""
+        write = input_ if cache_write is None else cache_write
+        return cls(
+            input=input_,
+            output=output,
+            cache_write_5m=write,
+            cache_write_1h=write,
+            cache_read=cached,
+        )
 
     @classmethod
     def from_input_output(cls, input_: float, output: float) -> "ModelRate":
@@ -59,6 +82,14 @@ class ModelRatePeriod:
 
 _DEFAULTS: dict[str, ModelRate] = {
     "claude-fable-5": ModelRate.from_input_output(10.00, 50.00),
+    # 5-series rates from the claude-api skill's model table (cached
+    # 2026-09-25). Opus 5.5 and Fable 5.1 list cache reads below the usual
+    # 0.1x of input, so those are set explicitly.
+    "claude-fable-5-1": ModelRate(10.00, 50.00, 12.50, 20.00, 0.25),
+    "claude-opus-5-5": ModelRate(4.00, 20.00, 5.00, 8.00, 0.20),
+    "claude-opus-5": ModelRate.from_input_output(5.00, 25.00),
+    "claude-sonnet-5-5": ModelRate.from_input_output(2.00, 10.00),
+    "claude-sonnet-5": ModelRate.from_input_output(2.00, 10.00),
     "claude-opus-4-8": ModelRate.from_input_output(5.00, 25.00),
     "claude-opus-4-7": ModelRate.from_input_output(5.00, 25.00),
     "claude-opus-4-6": ModelRate.from_input_output(5.00, 25.00),
@@ -70,10 +101,53 @@ _DEFAULTS: dict[str, ModelRate] = {
     "claude-sonnet-4-0": ModelRate.from_input_output(3.00, 15.00),
     "claude-haiku-4-5": ModelRate.from_input_output(1.00, 5.00),
     "claude-haiku-4-5-20251001": ModelRate.from_input_output(1.00, 5.00),
+    # --- OpenAI / Codex ---
+    "gpt-5.4": ModelRate.openai(2.50, 0.25, 15.00),
+    "gpt-5.5": ModelRate.openai(5.00, 0.50, 30.00),
+    # Sol's listed rate is promotional "through at least 2026-11-21"; the
+    # post-promo price isn't published yet. Add a [[prices]] row when it is.
+    "gpt-5.6-sol": ModelRate.openai(4.00, 0.40, 20.00, cache_write=5.00),
+    "gpt-5.6-terra": ModelRate.openai(2.00, 0.20, 12.00, cache_write=2.50),
+    "gpt-6-astra": ModelRate.openai(10.00, 1.00, 50.00, cache_write=12.50),
+    "gpt-6-sol": ModelRate.openai(2.00, 0.20, 10.00, cache_write=2.50),
 }
+
+_LUNA_PRE_CUT = ModelRate.openai(1.00, 0.10, 6.00, cache_write=1.25)
+_LUNA = ModelRate.openai(0.20, 0.02, 1.20, cache_write=0.25)
+_PRICE_CUT_2026_07_30 = date(2026, 7, 30)
+
+# Dated defaults: models whose price (or identity) changed on a known day.
+# Same semantics as [[prices]] rows in pricing.toml, which replace these.
+_DEFAULT_PERIODS: list[tuple[str, date, date | None, ModelRate, str, str]] = [
+    ("gpt-5.6-luna", DEFAULT_EFFECTIVE_FROM, _PRICE_CUT_2026_07_30, _LUNA_PRE_CUT,
+     OPENAI_PRICING_URL, "pre-2026-07-30 rate (secondary source: CloudZero)"),
+    ("gpt-5.6-luna", _PRICE_CUT_2026_07_30, None, _LUNA,
+     OPENAI_PRICING_URL, "2026-07-30 price cut"),
+    # codex-auto-review is an alias for the model behind Codex's approval
+    # reviewer: gpt-5.4 until OpenAI moved it to Luna on 2026-07-30.
+    ("codex-auto-review", DEFAULT_EFFECTIVE_FROM, _PRICE_CUT_2026_07_30,
+     _DEFAULTS["gpt-5.4"], OPENAI_PRICING_URL, "alias of gpt-5.4"),
+    ("codex-auto-review", _PRICE_CUT_2026_07_30, None, _LUNA,
+     OPENAI_PRICING_URL, "alias of gpt-5.6-luna"),
+]
+
+CODEX_MODEL_PREFIXES = ("gpt-", "codex-", "o1", "o3", "o4")
+
+
+def provider_for_model(model: str) -> str:
+    """Best guess at which tool produced a model id."""
+    m = (model or "").lower()
+    return "codex" if m.startswith(CODEX_MODEL_PREFIXES) else "claude"
+
+
+def source_url_for(model: str) -> str:
+    return OPENAI_PRICING_URL if provider_for_model(model) == "codex" else ANTHROPIC_PRICING_URL
 
 _SYNTHETIC_RATE = ModelRate(0, 0, 0, 0, 0)
 _FALLBACK_RATE = _DEFAULTS["claude-sonnet-4-6"]
+# Unknown Codex models price as the current Codex default, not as Sonnet.
+CODEX_FALLBACK_MODEL = "gpt-5.6-sol"
+_CODEX_FALLBACK_RATE = _DEFAULTS[CODEX_FALLBACK_MODEL]
 _warned_unknown: set[str] = set()
 
 
@@ -135,6 +209,9 @@ def load_rates(overrides_path: Path | None = None) -> dict[str, ModelRate]:
     `load_rate_periods()` so historical turns can keep historical prices.
     """
     rates = dict(_DEFAULTS)
+    for model, _f, effective_to, rate, _u, _n in _DEFAULT_PERIODS:
+        if effective_to is None:
+            rates[model] = rate
     data = _load_overrides(overrides_path)
     for model, fields in data.get("models", {}).items():
         rate = _rate_from_fields(fields)
@@ -183,9 +260,19 @@ def load_rate_periods(
             rates[model] = rate
 
     periods: dict[str, list[ModelRatePeriod]] = {
-        model: [ModelRatePeriod(model, DEFAULT_EFFECTIVE_FROM, None, rate)]
+        model: [ModelRatePeriod(model, DEFAULT_EFFECTIVE_FROM, None, rate,
+                                source_url=source_url_for(model))]
         for model, rate in rates.items()
     }
+    overridden = set(data.get("models", {}))
+    dated: dict[str, list[ModelRatePeriod]] = {}
+    for model, eff_from, eff_to, rate, url, note in _DEFAULT_PERIODS:
+        if model in overridden:
+            continue
+        dated.setdefault(model, []).append(
+            ModelRatePeriod(model, eff_from, eff_to, rate, source_url=url, note=note)
+        )
+    periods.update(dated)
 
     raw_periods = data.get("prices", [])
     if raw_periods:
@@ -214,7 +301,7 @@ def load_rate_periods(
                     effective_from=effective_from,
                     effective_to=effective_to,
                     rate=rate,
-                    source_url=p.get("source_url", ANTHROPIC_PRICING_URL),
+                    source_url=p.get("source_url", source_url_for(model)),
                     note=p.get("note", ""),
                 )
             )
@@ -233,13 +320,15 @@ def rate_for(model: str, rates: dict[str, ModelRate] | None = None) -> ModelRate
     rates = rates if rates is not None else load_rates()
     if model in rates:
         return rates[model]
+    codex = provider_for_model(model) == "codex"
     if model not in _warned_unknown:
         _warned_unknown.add(model)
+        tier = CODEX_FALLBACK_MODEL if codex else "Sonnet-tier"
         print(
-            f"[tokmon] warning: unknown model {model!r}; using Sonnet-tier fallback",
+            f"[tokmon] warning: unknown model {model!r}; using {tier} fallback",
             file=sys.stderr,
         )
-    return _FALLBACK_RATE
+    return _CODEX_FALLBACK_RATE if codex else _FALLBACK_RATE
 
 
 def rate_for_at(

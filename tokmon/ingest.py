@@ -117,6 +117,27 @@ def _parse_assistant(
     )
 
 
+def _is_human_prompt(obj: dict) -> bool:
+    """Claude Code logs tool results, slash-command echoes, skill bodies and
+    compaction summaries as type=user too. Only typed messages count."""
+    if obj.get("isMeta") or obj.get("isCompactSummary") or obj.get("isSidechain"):
+        return False
+    content = (obj.get("message") or {}).get("content")
+    if isinstance(content, str):
+        head = content.lstrip()[:32]
+        return not head.startswith(("<command-", "<local-command", "[Request interrupted"))
+    if isinstance(content, list):
+        types = {b.get("type") for b in content if isinstance(b, dict)}
+        if "tool_result" in types or not types:
+            return False
+        texts = [b.get("text") or "" for b in content
+                 if isinstance(b, dict) and b.get("type") == "text"]
+        if texts and all(t.lstrip().startswith("[Request interrupted") for t in texts):
+            return False
+        return True
+    return False
+
+
 def _parse_user(obj: dict, source_file: str) -> UserTurnRecord | None:
     uuid = obj.get("uuid")
     if not uuid:
@@ -128,19 +149,181 @@ def _parse_user(obj: dict, source_file: str) -> UserTurnRecord | None:
         project_path=project_path,
         ts=_parse_ts(obj.get("timestamp")),
         source_file=source_file,
+        is_prompt=_is_human_prompt(obj),
     )
+
+
+_TURN_COLUMNS = (
+    "uuid", "parent_uuid", "request_id", "session_id", "project_path",
+    "project_label", "git_branch", "model", "ts", "is_sidechain",
+    "input_tokens", "output_tokens", "cache_write_5m", "cache_write_1h",
+    "cache_read", "service_tier", "stop_reason", "has_thinking",
+    "thinking_chars", "text_chars", "web_search_requests",
+    "web_fetch_requests", "raw_usage", "source_file", "source_offset", "host",
+    "provider", "reasoning_tokens", "reasoning_effort",
+)
+_RATE_COLUMNS = (
+    "provider", "host", "ts", "session_id", "limit_id", "plan_type",
+    "window_name", "window_minutes", "used_percent", "resets_at",
+    "reached_type", "source_file",
+)
+
+
+def _multi_insert(conn, table: str, columns: tuple[str, ...], rows: list[list],
+                  chunk: int = 200) -> None:
+    """Multi-row INSERT ... VALUES. No ON CONFLICT clause: duckdb 1.5's
+    conflict-checking insert path costs ~30 ms/row on the turns table versus
+    ~1 ms for a plain insert, so _BatchWriter filters out existing keys first."""
+    cols = ", ".join(columns)
+    one = "(" + ", ".join("?" for _ in columns) + ")"
+    for i in range(0, len(rows), chunk):
+        part = rows[i:i + chunk]
+        conn.execute(
+            f"INSERT INTO {table} ({cols}) VALUES " + ", ".join(one for _ in part),
+            [v for row in part for v in row],
+        )
+
+
+class _BatchWriter:
+    """Buffers parsed records and writes them in multi-row statements.
+
+    Row-at-a-time inserts dominated ingest time (a 3.8 GB Codex history is
+    ~87k turns and ~86k tool calls). Each flush does one key lookup per table
+    and a handful of multi-row inserts. Keys already in the DB, or repeated
+    within the batch, are dropped: first occurrence wins, matching the old
+    ON CONFLICT DO NOTHING semantics.
+    """
+
+    def __init__(self, conn: duckdb.DuckDBPyConnection, flush_every: int = 1000):
+        self.conn = conn
+        self.flush_every = flush_every
+        self.turns: dict[str, TurnRecord] = {}
+        self.users: dict[str, UserTurnRecord] = {}
+        self.rates: dict[tuple, dict] = {}
+        self.new_turns = 0
+        self.new_user_turns = 0
+        self.new_tool_calls = 0
+
+    def add(self, rec) -> None:
+        if isinstance(rec, TurnRecord):
+            self.turns.setdefault(rec.uuid, rec)
+        elif isinstance(rec, UserTurnRecord):
+            self.users.setdefault(rec.uuid, rec)
+        elif isinstance(rec, dict):
+            key = (rec["session_id"], rec["limit_id"], rec["window_name"], rec["ts"])
+            self.rates.setdefault(key, rec)
+        if len(self.turns) + len(self.users) + len(self.rates) >= self.flush_every:
+            self.flush()
+
+    def _existing(self, table: str, keys: list[str]) -> set[str]:
+        if not keys:
+            return set()
+        rows = self.conn.execute(
+            f"SELECT uuid FROM {table} WHERE uuid IN (SELECT unnest(?::VARCHAR[]))",
+            [keys],
+        ).fetchall()
+        return {r[0] for r in rows}
+
+    def flush(self) -> None:
+        conn = self.conn
+        if self.turns:
+            have = self._existing("turns", list(self.turns))
+            fresh = [r for k, r in self.turns.items() if k not in have]
+            _multi_insert(conn, "turns", _TURN_COLUMNS,
+                          [[getattr(r, c) for c in _TURN_COLUMNS] for r in fresh])
+            tool_rows = [
+                [r.uuid, tc.idx, tc.name, tc.input_chars, tc.input_preview]
+                for r in fresh for tc in r.tool_calls
+            ]
+            _multi_insert(conn, "tool_calls",
+                          ("turn_uuid", "idx", "tool_name", "input_chars", "input_preview"),
+                          tool_rows)
+            self.new_turns += len(fresh)
+            self.new_tool_calls += len(tool_rows)
+            self.turns.clear()
+        if self.users:
+            have = self._existing("user_turns", list(self.users))
+            fresh_u = [r for k, r in self.users.items() if k not in have]
+            _multi_insert(conn, "user_turns",
+                          ("uuid", "session_id", "project_path", "ts", "source_file",
+                           "is_prompt"),
+                          [[r.uuid, r.session_id, r.project_path, r.ts, r.source_file,
+                            r.is_prompt]
+                           for r in fresh_u])
+            self.new_user_turns += len(fresh_u)
+            self.users.clear()
+        if self.rates:
+            sessions = sorted({k[0] for k in self.rates})
+            have_r = {
+                tuple(r) for r in conn.execute(
+                    """
+                    SELECT session_id, limit_id, window_name, ts
+                    FROM rate_limit_samples
+                    WHERE session_id IN (SELECT unnest(?::VARCHAR[]))
+                    """,
+                    [sessions],
+                ).fetchall()
+            }
+            _multi_insert(conn, "rate_limit_samples", _RATE_COLUMNS,
+                          [[r[c] for c in _RATE_COLUMNS]
+                           for k, r in self.rates.items() if k not in have_r])
+            self.rates.clear()
 
 
 def _iter_jsonl_lines(
     fh, start_offset: int
 ) -> Iterable[tuple[bytes, int, int]]:
-    """Yield (line_bytes, offset_at_start_of_line, new_offset)."""
+    """Yield (line_bytes, offset_at_start_of_line, new_offset).
+
+    A final line with no trailing newline is only yielded if it already parses
+    as JSON. Otherwise it is probably still being written, and consuming it now
+    would record the half-line as malformed and move the offset past it, losing
+    the record for good once the writer finishes it.
+    """
     fh.seek(start_offset)
     offset = start_offset
     for line in fh:
+        if not line.endswith(b"\n"):
+            try:
+                json.loads(line)
+            except ValueError:
+                return
         line_start = offset
         offset += len(line)
         yield line, line_start, offset
+
+
+class _ClaudeReader:
+    """Claude Code transcripts are self-describing: every record carries its
+    own session, cwd and model, so there is no state to carry between runs."""
+
+    provider = "claude"
+    state = None
+
+    def __init__(self, source_file: str, host: str, state: dict | None = None):
+        self.source_file = source_file
+        self.host = host
+
+    @staticmethod
+    def wants(raw_line: bytes) -> bool:
+        return True
+
+    def feed(self, obj: dict, line_start: int) -> list:
+        otype = obj.get("type")
+        if otype == "assistant":
+            rec = _parse_assistant(obj, self.source_file, line_start, self.host)
+            return [rec] if rec is not None else []
+        if otype == "user":
+            rec_u = _parse_user(obj, self.source_file)
+            return [rec_u] if rec_u is not None else []
+        return []
+
+
+def _reader_class(provider: str):
+    if provider == "codex":
+        from .ingest_codex import CodexReader
+        return CodexReader
+    return _ClaudeReader
 
 
 def _ingest_file(
@@ -148,11 +331,12 @@ def _ingest_file(
     file_path: Path,
     stats: IngestStats,
     host: str = "local",
+    provider: str = "claude",
 ) -> None:
     source_file = str(file_path)
     try:
-        mtime = file_path.stat().st_mtime
-        size = file_path.stat().st_size
+        st = file_path.stat()
+        mtime, size = st.st_mtime, st.st_size
     except FileNotFoundError:
         return
 
@@ -165,73 +349,53 @@ def _ingest_file(
     if row is not None:
         prev_mtime, last_offset, malformed_total = row
         if last_offset > size:
+            # Truncated/rewritten: start over, parser state included.
             last_offset = 0
             malformed_total = 0
 
     if last_offset >= size:
         return
 
+    reader_cls = _reader_class(provider)
+    state = None
+    if last_offset > 0 and reader_cls is not _ClaudeReader:
+        srow = conn.execute(
+            "SELECT state FROM ingest_state WHERE source_file = ?", [source_file]
+        ).fetchone()
+        if srow is not None:
+            state = json.loads(srow[0])
+        else:
+            # Offset without state: re-read from the top. Inserts are
+            # idempotent, so this only costs time.
+            last_offset = 0
+    reader = reader_cls(source_file, host, state)
+
     stats.files_scanned += 1
-    new_turns_local = 0
-    new_user_turns_local = 0
-    new_tool_calls_local = 0
+    writer = _BatchWriter(conn)
     malformed_local = 0
     bytes_consumed = 0
 
     with open(file_path, "rb") as fh:
         for raw_line, line_start, new_offset in _iter_jsonl_lines(fh, last_offset):
             bytes_consumed = new_offset - last_offset
+            if not reader.wants(raw_line):
+                continue
             try:
                 obj = json.loads(raw_line)
             except json.JSONDecodeError:
                 malformed_local += 1
                 continue
-            otype = obj.get("type")
-            if otype == "assistant":
-                rec = _parse_assistant(obj, source_file, line_start, host)
-                if rec is None:
-                    continue
-                conn.execute(
-                    """
-                    INSERT INTO turns VALUES (
-                        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                        ?, ?, ?, ?, ?, ?
-                    )
-                    ON CONFLICT (uuid) DO NOTHING
-                    """,
-                    [
-                        rec.uuid, rec.parent_uuid, rec.request_id, rec.session_id,
-                        rec.project_path, rec.project_label, rec.git_branch, rec.model,
-                        rec.ts, rec.is_sidechain, rec.input_tokens, rec.output_tokens,
-                        rec.cache_write_5m, rec.cache_write_1h, rec.cache_read,
-                        rec.service_tier, rec.stop_reason, rec.has_thinking,
-                        rec.thinking_chars, rec.text_chars,
-                        rec.web_search_requests, rec.web_fetch_requests,
-                        rec.raw_usage, rec.source_file, rec.source_offset,
-                        rec.host,
-                    ],
-                )
-                new_turns_local += 1
-                for tc in rec.tool_calls:
-                    conn.execute(
-                        "INSERT INTO tool_calls VALUES (?, ?, ?, ?, ?)",
-                        [rec.uuid, tc.idx, tc.name, tc.input_chars, tc.input_preview],
-                    )
-                    new_tool_calls_local += 1
-            elif otype == "user":
-                rec_u = _parse_user(obj, source_file)
-                if rec_u is None:
-                    continue
-                conn.execute(
-                    """
-                    INSERT INTO user_turns VALUES (?, ?, ?, ?, ?)
-                    ON CONFLICT (uuid) DO NOTHING
-                    """,
-                    [rec_u.uuid, rec_u.session_id, rec_u.project_path, rec_u.ts, rec_u.source_file],
-                )
-                new_user_turns_local += 1
+            if not isinstance(obj, dict):
+                malformed_local += 1
+                continue
+            for rec in reader.feed(obj, line_start):
+                writer.add(rec)
+    writer.flush()
+    new_turns_local = writer.new_turns
+    new_user_turns_local = writer.new_user_turns
+    new_tool_calls_local = writer.new_tool_calls
 
-    new_offset = last_offset + bytes_consumed if bytes_consumed else size
+    new_offset = last_offset + bytes_consumed
     now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
     conn.execute(
         """
@@ -244,6 +408,14 @@ def _ingest_file(
         """,
         [source_file, mtime, new_offset, now_utc, malformed_total + malformed_local],
     )
+    if reader.state is not None:
+        conn.execute(
+            """
+            INSERT INTO ingest_state VALUES (?, ?)
+            ON CONFLICT (source_file) DO UPDATE SET state = excluded.state
+            """,
+            [source_file, json.dumps(reader.state)],
+        )
 
     if new_turns_local or new_user_turns_local or malformed_local:
         stats.files_with_new_data += 1
@@ -254,15 +426,31 @@ def _ingest_file(
     stats.bytes_read += bytes_consumed
 
 
+def _iter_root_files(root_path: Path, provider: str) -> Iterable[Path]:
+    if provider == "codex":
+        from .ingest_codex import iter_rollout_files
+        return iter_rollout_files(root_path)
+    return sorted(root_path.rglob("*.jsonl"))
+
+
+Root = tuple  # (path, host) or (path, host, provider)
+
+
+def _normalize_root(root: Root) -> tuple[Path, str, str]:
+    if len(root) == 3:
+        return Path(root[0]), root[1], root[2]
+    return Path(root[0]), root[1], "claude"
+
+
 def _resolve_roots(
-    roots: list[tuple[Path, str]] | None,
+    roots: list[Root] | None,
     projects_dir: Path | None,
-) -> list[tuple[Path, str]]:
+) -> list[tuple[Path, str, str]]:
     """Caller-provided roots win; else legacy single-dir path; else config."""
     if roots is not None:
-        return roots
+        return [_normalize_root(r) for r in roots]
     if projects_dir is not None:
-        return [(projects_dir, "local")]
+        return [(projects_dir, "local", "claude")]
     cfg = cfg_mod.load()
     return list(cfg_mod.iter_roots(cfg.all_roots()))
 
@@ -270,7 +458,7 @@ def _resolve_roots(
 def incremental(
     conn: duckdb.DuckDBPyConnection | None = None,
     projects_dir: Path | None = None,
-    roots: list[tuple[Path, str]] | None = None,
+    roots: list[Root] | None = None,
 ) -> IngestStats:
     """Scan one or more project roots and ingest anything new.
 
@@ -294,13 +482,13 @@ def incremental(
     # A file failing rolls back only that file's inserts; ingest_log isn't
     # updated for it, so the next run retries from the same offset.
     file_count = 0
-    for root_path, host_label in resolved_roots:
+    for root_path, host_label, provider in resolved_roots:
         if not root_path.exists():
             continue
-        for f in sorted(root_path.rglob("*.jsonl")):
+        for f in _iter_root_files(root_path, provider):
             conn.execute("BEGIN")
             try:
-                _ingest_file(conn, f, stats, host=host_label)
+                _ingest_file(conn, f, stats, host=host_label, provider=provider)
                 conn.execute("COMMIT")
             except Exception as e:
                 conn.execute("ROLLBACK")
@@ -325,7 +513,7 @@ def incremental(
 
 def full(
     projects_dir: Path | None = None,
-    roots: list[tuple[Path, str]] | None = None,
+    roots: list[Root] | None = None,
 ) -> IngestStats:
     """Wipe DB and re-ingest everything."""
     from .db import reset

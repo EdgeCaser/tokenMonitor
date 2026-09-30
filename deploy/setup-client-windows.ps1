@@ -205,7 +205,7 @@ Register-ScheduledTask `
     -Trigger $trigger `
     -Settings $settings `
     -Principal $principal `
-    -Description "Push ~/.claude/projects to the tokmon Pi every $IntervalMinutes min" | Out-Null
+    -Description "Push Claude Code and Codex transcripts to the tokmon Pi every $IntervalMinutes min" | Out-Null
 
 Write-OK "scheduled task '$taskName' registered (every $IntervalMinutes min)"
 
