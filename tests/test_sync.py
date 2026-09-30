@@ -89,3 +89,19 @@ def test_push_against_local_loopback(tmp_path, monkeypatch):
     # via `tokmon push --dry-run` in CI.
     assert "--dry-run" in cmd
     assert str(src) + "/" == cmd[-2]
+
+
+def test_windows_rsh_points_msys_ssh_at_profile_keys(tmp_path, monkeypatch):
+    """MSYS2's ssh may look in its own /home/<user>/.ssh and find no key;
+    the rsh must hand it the Windows profile's config, key and known_hosts."""
+    monkeypatch.setattr(S.os, "name", "nt")
+    ssh = tmp_path / ".ssh"
+    ssh.mkdir()
+    (ssh / "config").write_text("Host pi\n")
+    (ssh / "id_ed25519").write_text("x")
+    rsh = S._default_rsh(profile=tmp_path)
+    assert rsh.startswith("/usr/bin/ssh ")
+    assert "-F " in rsh and "config" in rsh
+    assert "-i " in rsh and "id_ed25519" in rsh
+    assert "id_rsa" not in rsh          # only keys that exist
+    assert "UserKnownHostsFile=" in rsh

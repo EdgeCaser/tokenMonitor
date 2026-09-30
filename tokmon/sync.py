@@ -147,17 +147,31 @@ def build_rsync_cmd(
     return cmd
 
 
-def _default_rsh() -> str | None:
+def _default_rsh(profile: Path | None = None) -> str | None:
     """Remote shell rsync should use, or None to let rsync pick `ssh` from PATH.
 
     On Windows the rsync we ship is the MSYS2 build, and it cannot drive the
     native Windows OpenSSH for its binary protocol (the stream closes with
-    0 bytes, rsync error 12). Point it at the MSYS2 ssh instead, which finds the
-    user's keys because MSYS2 resolves HOME to %USERPROFILE%.
+    0 bytes, rsync error 12). Point it at the MSYS2 ssh instead.
+
+    MSYS2 does not reliably resolve HOME to %USERPROFILE%: with the stock
+    `db_home: cygwin` setting its ssh looks in /home/<user>/.ssh (inside the
+    MSYS2 install),
+    finds no key and gets "Permission denied (publickey)", which surfaces
+    as the same rsync error 12. So hand it the Windows profile's ssh config,
+    keys and known_hosts explicitly.
     """
     if os.name != "nt":
         return None
-    return "/usr/bin/ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new"
+    parts = ["/usr/bin/ssh", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=accept-new"]
+    ssh_dir = (profile or Path(os.environ.get("USERPROFILE") or Path.home())) / ".ssh"
+    if (ssh_dir / "config").is_file():
+        parts += ["-F", _to_rsync_source(ssh_dir / "config")]
+    for name in ("id_ed25519", "id_ecdsa", "id_rsa"):
+        if (ssh_dir / name).is_file():
+            parts += ["-i", _to_rsync_source(ssh_dir / name)]
+    parts += ["-o", f"UserKnownHostsFile={_to_rsync_source(ssh_dir / 'known_hosts')}"]
+    return " ".join(parts)
 
 
 def _to_rsync_source(source: Path) -> str:
